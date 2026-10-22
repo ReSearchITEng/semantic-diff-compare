@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-mono: 'Fira Code', Consolas, Monaco, 'Courier New', monospace;
+  }
+}
+
+/* VS Code Dark Theme */
+.theme-vscode-dark {
+  --bg-app: #18181b;
+  --bg-panel: #1e1e24;
+  --bg-gutter: #141416;
+  --bg-header: #27272e;
+  --border-color: #3f3f46;
+  --text-primary: #e4e4e7;
+  --text-muted: #a1a1aa;
+  --diff-add-bg: rgba(34, 197, 94, 0.16);
+  --diff-add-border: rgba(34, 197, 94, 0.4);
+  --diff-del-bg: rgba(239, 68, 68, 0.16);
+  --diff-del-border: rgba(239, 68, 68, 0.4);
+  --diff-mod-bg: rgba(245, 158, 11, 0.15);
+  --diff-mod-border: rgba(245, 158, 11, 0.35);
+  --diff-ignored-bg: rgba(148, 163, 184, 0.1);
+  --diff-ignored-border: rgba(148, 163, 184, 0.25);
+  --diff-comment-bg: rgba(56, 189, 248, 0.08);
+  --syntax-key: #7dd3fc;
+  --syntax-str: #86efac;
+  --syntax-num: #fca5a5;
+  --syntax-bool: #fde047;
+  --syntax-null: #c084fc;
+  --syntax-comment: #71717a;
+}
+
+/* Solarized Dark Theme */
+.theme-solarized-dark {
+  --bg-app: #00212b;
+  --bg-panel: #002b36;
+  --bg-gutter: #073642;
+  --bg-header: #073642;
+  --border-color: #0d4654;
+  --text-primary: #93a1a1;
+  --text-muted: #586e75;
+  --diff-add-bg: rgba(133, 153, 0, 0.22);
+  --diff-add-border: rgba(133, 153, 0, 0.5);
+  --diff-del-bg: rgba(220, 50, 47, 0.22);
+  --diff-del-border: rgba(220, 50, 47, 0.5);
+  --diff-mod-bg: rgba(181, 137, 0, 0.22);
+  --diff-mod-border: rgba(181, 137, 0, 0.5);
+  --diff-ignored-bg: rgba(88, 110, 117, 0.15);
+  --diff-ignored-border: rgba(88, 110, 117, 0.35);
+  --diff-comment-bg: rgba(42, 161, 152, 0.12);
+  --syntax-key: #268bd2;
+  --syntax-str: #2aa198;
+  --syntax-num: #d33682;
+  --syntax-bool: #b58900;
+  --syntax-null: #6c71c4;
+  --syntax-comment: #586e75;
+}
+
+/* Solarized Light Theme */
+.theme-solarized-light {
+  --bg-app: #f4ece1;
+  --bg-panel: #fdf6e3;
+  --bg-gutter: #eee8d5;
+  --bg-header: #eee8d5;
+  --border-color: #e0d7c3;
+  --text-primary: #586e75;
+  --text-muted: #93a1a1;
+  --diff-add-bg: rgba(133, 153, 0, 0.16);
+  --diff-add-border: rgba(133, 153, 0, 0.4);
+  --diff-del-bg: rgba(220, 50, 47, 0.14);
+  --diff-del-border: rgba(220, 50, 47, 0.4);
+  --diff-mod-bg: rgba(181, 137, 0, 0.16);
+  --diff-mod-border: rgba(181, 137, 0, 0.4);
+  --diff-ignored-bg: rgba(147, 161, 161, 0.16);
+  --diff-ignored-border: rgba(147, 161, 161, 0.3);
+  --diff-comment-bg: rgba(42, 161, 152, 0.12);
+  --syntax-key: #268bd2;
+  --syntax-str: #2aa198;
+  --syntax-num: #d33682;
+  --syntax-bool: #b58900;
+  --syntax-null: #6c71c4;
+  --syntax-comment: #93a1a1;
+}
+
+/* Custom scrollbars for side-by-side sync */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(156, 163, 175, 0.3);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 163, 175, 0.5);
+}

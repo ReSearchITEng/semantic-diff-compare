@@ -1,0 +1,6 @@
+{
+  "name": "SemantiCompare - Semantic JSONC & YAML Diff Tool",
+  "description": "Professional semantic diff and merge tool for JSON, JSONC, and YAML with Beyond Compare alignment, comment preservation, auto-repair, and git-minimal export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
