@@ -4,23 +4,26 @@
  */
 
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { AlertTriangle, X } from 'lucide-react';
 import { Header } from './components/Header';
-import { DiffPane } from './components/DiffPane';
+import { DiffPane, extractCleanPaneSelection } from './components/DiffPane';
 import { DiffGutter } from './components/DiffGutter';
 import { BottomLineInspector } from './components/BottomLineInspector';
 import { StatusBar } from './components/StatusBar';
 import { IgnoredFieldsModal } from './components/IgnoredFieldsModal';
 import { RawEditorModal } from './components/RawEditorModal';
 import { MergeAllModal } from './components/MergeAllModal';
+import { DiffReportModal } from './components/DiffReportModal';
 import { DocsModal } from './components/DocsModal';
 import { PRESETS, PresetDemo } from './diff/presets';
-import { parseDocument } from './diff/parser';
+import { parseDocument, validatePastedDocument } from './diff/parser';
 import { computeSemanticDiff } from './diff/semanticDiff';
 import {
   setValueAtPath,
   getValueAtPath,
   mergeDataTrees,
   serializePreservingFormat,
+  renameKeyAtPath,
 } from './diff/inPlacePatcher';
 import {
   adoptFormat,
@@ -32,12 +35,23 @@ import {
 } from './diff/formatter';
 import { AlignedDiffRow, DocumentFormat, ThemeType } from './diff/types';
 
+interface HistorySnapshot {
+  leftRaw: string;
+  rightRaw: string;
+  leftFormatOverride?: DocumentFormat;
+  rightFormatOverride?: DocumentFormat;
+  currentPresetId: string;
+  label: string;
+}
+
 export default function App() {
   // Preset initialization
   const defaultPreset = PRESETS[0];
   const [currentPresetId, setCurrentPresetId] = useState<string>(defaultPreset.id);
   const [leftRaw, setLeftRaw] = useState<string>(defaultPreset.leftText);
   const [rightRaw, setRightRaw] = useState<string>(defaultPreset.rightText);
+  const [leftFormatOverride, setLeftFormatOverride] = useState<DocumentFormat | undefined>(undefined);
+  const [rightFormatOverride, setRightFormatOverride] = useState<DocumentFormat | undefined>(undefined);
   const [ignoreListOrder, setIgnoreListOrder] = useState<boolean>(defaultPreset.ignoreListOrder);
   const [ignoreQuoteStyle, setIgnoreQuoteStyle] = useState<boolean>(true);
   const [inlineEditMode, setInlineEditMode] = useState<boolean>(true);
@@ -45,9 +59,76 @@ export default function App() {
   const [ignoredFields, setIgnoredFields] = useState<string[]>(defaultPreset.ignoredFields);
   const [theme, setTheme] = useState<ThemeType>('vscode-dark');
 
+  // Undo / Redo History Stacks
+  const [undoStack, setUndoStack] = useState<HistorySnapshot[]>([]);
+  const [redoStack, setRedoStack] = useState<HistorySnapshot[]>([]);
+
+  const pushHistory = useCallback(
+    (label: string) => {
+      setUndoStack((prev) => [
+        ...prev.slice(-49),
+        {
+          leftRaw,
+          rightRaw,
+          leftFormatOverride,
+          rightFormatOverride,
+          currentPresetId,
+          label,
+        },
+      ]);
+      setRedoStack([]);
+    },
+    [leftRaw, rightRaw, leftFormatOverride, rightFormatOverride, currentPresetId]
+  );
+
+  const handleUndo = useCallback(() => {
+    if (undoStack.length === 0) return;
+    const previous = undoStack[undoStack.length - 1];
+    setRedoStack((prev) => [
+      ...prev,
+      {
+        leftRaw,
+        rightRaw,
+        leftFormatOverride,
+        rightFormatOverride,
+        currentPresetId,
+        label: previous.label,
+      },
+    ]);
+    setUndoStack((prev) => prev.slice(0, -1));
+    setLeftRaw(previous.leftRaw);
+    setRightRaw(previous.rightRaw);
+    setLeftFormatOverride(previous.leftFormatOverride);
+    setRightFormatOverride(previous.rightFormatOverride);
+    setCurrentPresetId(previous.currentPresetId);
+  }, [undoStack, leftRaw, rightRaw, leftFormatOverride, rightFormatOverride, currentPresetId]);
+
+  const handleRedo = useCallback(() => {
+    if (redoStack.length === 0) return;
+    const next = redoStack[redoStack.length - 1];
+    setUndoStack((prev) => [
+      ...prev,
+      {
+        leftRaw,
+        rightRaw,
+        leftFormatOverride,
+        rightFormatOverride,
+        currentPresetId,
+        label: next.label,
+      },
+    ]);
+    setRedoStack((prev) => prev.slice(0, -1));
+    setLeftRaw(next.leftRaw);
+    setRightRaw(next.rightRaw);
+    setLeftFormatOverride(next.leftFormatOverride);
+    setRightFormatOverride(next.rightFormatOverride);
+    setCurrentPresetId(next.currentPresetId);
+  }, [redoStack, leftRaw, rightRaw, leftFormatOverride, rightFormatOverride, currentPresetId]);
+
   // Modals & Active Path
   const [isIgnoredFieldsModalOpen, setIsIgnoredFieldsModalOpen] = useState(false);
   const [isRawEditorOpen, setIsRawEditorOpen] = useState(false);
+  const [isDiffReportModalOpen, setIsDiffReportModalOpen] = useState(false);
   const [isDocsModalOpen, setIsDocsModalOpen] = useState(false);
   const [mergeAllModal, setMergeAllModal] = useState<{
     isOpen: boolean;
@@ -68,8 +149,14 @@ export default function App() {
   const isSyncingScroll = useRef(false);
 
   // Parse Left and Right documents
-  const leftDoc = useMemo(() => parseDocument(leftRaw), [leftRaw]);
-  const rightDoc = useMemo(() => parseDocument(rightRaw), [rightRaw]);
+  const leftDoc = useMemo(
+    () => parseDocument(leftRaw, leftFormatOverride),
+    [leftRaw, leftFormatOverride]
+  );
+  const rightDoc = useMemo(
+    () => parseDocument(rightRaw, rightFormatOverride),
+    [rightRaw, rightFormatOverride]
+  );
 
   // Compute Semantic Diff
   const { rows, stats } = useMemo(() => {
@@ -80,7 +167,7 @@ export default function App() {
     });
   }, [leftDoc, rightDoc, ignoreListOrder, ignoredFields, ignoreQuoteStyle]);
 
-  // Determine active row for the Beyond Compare bottom line inspector
+  // Determine active row for the bottom split line inspector
   const activeRow = useMemo(() => {
     if (activePath) {
       const matched = rows.find(
@@ -91,7 +178,6 @@ export default function App() {
       );
       if (matched) return matched;
     }
-    // Default to first modified/added/deleted row so the bottom bar is immediately informative
     return (
       rows.find(
         (r) =>
@@ -135,9 +221,12 @@ export default function App() {
 
   // Preset Selection
   const handleSelectPreset = (preset: PresetDemo) => {
+    pushHistory(`Switch preset to ${preset.name}`);
     setCurrentPresetId(preset.id);
     setLeftRaw(preset.leftText);
     setRightRaw(preset.rightText);
+    setLeftFormatOverride(undefined);
+    setRightFormatOverride(undefined);
     setIgnoreListOrder(preset.ignoreListOrder);
     setIgnoredFields(preset.ignoredFields);
     setActivePath('');
@@ -154,6 +243,7 @@ export default function App() {
   // Inline Edit handler (updates Left or Right document in place without Raw Edit modal)
   const handleInlineEditValue = (side: 'left' | 'right', path: string, newValue: any) => {
     if (!path) return;
+    pushHistory(`Inline edit ${path} on ${side}`);
     if (side === 'left') {
       const updatedData = setValueAtPath(leftDoc.data, path, newValue);
       const updatedText = serializePreservingFormat(updatedData, leftDoc);
@@ -169,11 +259,54 @@ export default function App() {
     setCurrentPresetId('custom');
   };
 
+  // Live Line Edit handler for always-editable Live Editor mode (updates immediately as user types)
+  const handleLiveEditLine = (
+    side: 'left' | 'right',
+    path: string,
+    originalKey: string | undefined,
+    newKey: string | undefined,
+    newValue: any,
+    shouldPushHistory: boolean
+  ) => {
+    if (!path) return;
+    if (shouldPushHistory) {
+      pushHistory(`Live edit ${path} on ${side}`);
+    }
+
+    const targetDoc = side === 'left' ? leftDoc : rightDoc;
+    let updatedData = targetDoc.data;
+    let nextActivePath = path;
+
+    if (originalKey && newKey && originalKey !== newKey) {
+      const renamed = renameKeyAtPath(targetDoc.data, path, originalKey, newKey, newValue);
+      updatedData = renamed.data;
+      nextActivePath = renamed.newPath;
+    } else if (newValue !== undefined) {
+      updatedData = setValueAtPath(targetDoc.data, path, newValue);
+    } else {
+      return;
+    }
+
+    const updatedText = serializePreservingFormat(updatedData, targetDoc);
+    if (side === 'left') {
+      setLeftRaw(updatedText);
+      if (newValue !== undefined) setActiveLeftVal(newValue);
+    } else {
+      setRightRaw(updatedText);
+      if (newValue !== undefined) setActiveRightVal(newValue);
+    }
+    setActivePath(nextActivePath);
+    setCurrentPresetId('custom');
+  };
+
   // Per-pane format switcher (convert between YAML, JSON, JSONC, TOML on the fly)
   const handleChangePaneFormat = (side: 'left' | 'right', targetFormat: DocumentFormat) => {
+    pushHistory(`Convert ${side} pane to ${targetFormat.toUpperCase()}`);
     if (side === 'left') {
+      setLeftFormatOverride(targetFormat);
       setLeftRaw(convertDocumentToFormat(leftDoc, targetFormat));
     } else {
+      setRightFormatOverride(targetFormat);
       setRightRaw(convertDocumentToFormat(rightDoc, targetFormat));
     }
     setCurrentPresetId('custom');
@@ -211,21 +344,108 @@ export default function App() {
     setFoldedBlocks(nestedBlockIds.size > 0 ? nestedBlockIds : allBlockIds);
   };
 
-  // Row-level Beyond Compare Merging: Left ▸ Right
+  // Active / Focused Pane for daily keyboard shortcuts (Ctrl+A, Ctrl+C, Ctrl+V)
+  const [focusedSide, setFocusedSide] = useState<'left' | 'right'>('left');
+  const focusedSideRef = useRef<'left' | 'right'>('left');
+  const [pastedFeedbackSide, setPastedFeedbackSide] = useState<'left' | 'right' | null>(null);
+  const [pasteError, setPasteError] = useState<{
+    side: 'left' | 'right';
+    message: string;
+  } | null>(null);
+  const pasteErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastNativePasteTimeRef = useRef<number>(0);
+
+  const activatePane = useCallback((side: 'left' | 'right') => {
+    focusedSideRef.current = side;
+    setFocusedSide(side);
+  }, []);
+
+  const handlePasteIntoPane = useCallback(
+    (side: 'left' | 'right', text: string): boolean => {
+      if (!text || text.length === 0) return false;
+
+      // Validate that the pasted content is valid JSON, JSONC, YAML, or TOML before updating state
+      const validation = validatePastedDocument(text);
+      if (!validation.valid) {
+        if (pasteErrorTimerRef.current) {
+          clearTimeout(pasteErrorTimerRef.current);
+        }
+        setPasteError({
+          side,
+          message: validation.error || 'Pasted content is not valid JSON or YAML.',
+        });
+        pasteErrorTimerRef.current = setTimeout(() => {
+          setPasteError(null);
+        }, 5000);
+        return false;
+      }
+
+      if (pasteErrorTimerRef.current) {
+        clearTimeout(pasteErrorTimerRef.current);
+      }
+      setPasteError(null);
+
+      pushHistory(`Paste into ${side === 'left' ? 'Left' : 'Right'} pane`);
+      if (side === 'left') {
+        setLeftFormatOverride(undefined);
+        setLeftRaw(text);
+      } else {
+        setRightFormatOverride(undefined);
+        setRightRaw(text);
+      }
+      setCurrentPresetId('custom');
+      setPastedFeedbackSide(side);
+      setTimeout(() => {
+        setPastedFeedbackSide((prev) => (prev === side ? null : prev));
+      }, 2000);
+      return true;
+    },
+    [pushHistory]
+  );
+
+  // Row-level Merging: Left ▸ Right
   const handleMergeRowLeftToRight = (row: AlignedDiffRow) => {
-    if (!row.path) return;
-    const sourceVal = getValueAtPath(leftDoc.data, row.path);
-    const updatedRightData = setValueAtPath(rightDoc.data, row.path, sourceVal);
+    const sourcePath = row.left?.path || row.path;
+    let targetPath = row.right?.path || row.path;
+    if (!sourcePath && !targetPath) return;
+
+    pushHistory(`Merge ${sourcePath || targetPath} Left ▸ Right`);
+    const sourceVal = row.left ? getValueAtPath(leftDoc.data, sourcePath) : undefined;
+
+    // When copying an unmatched array element from Left to Right (deleted_right), append to Right's array
+    if (row.left && !row.right && /\[\d+\]$/.test(sourcePath)) {
+      const parentPath = sourcePath.replace(/\[\d+\]$/, '');
+      const parentArr = getValueAtPath(rightDoc.data, parentPath);
+      if (Array.isArray(parentArr)) {
+        targetPath = `${parentPath}[${parentArr.length}]`;
+      }
+    }
+
+    const updatedRightData = setValueAtPath(rightDoc.data, targetPath, sourceVal);
     const updatedRightText = serializePreservingFormat(updatedRightData, rightDoc);
     setRightRaw(updatedRightText);
     setCurrentPresetId('custom');
   };
 
-  // Row-level Beyond Compare Merging: Right ◂ Left
+  // Row-level Merging: Right ◂ Left
   const handleMergeRowRightToLeft = (row: AlignedDiffRow) => {
-    if (!row.path) return;
-    const sourceVal = getValueAtPath(rightDoc.data, row.path);
-    const updatedLeftData = setValueAtPath(leftDoc.data, row.path, sourceVal);
+    const sourcePath = row.right?.path || row.path;
+    let targetPath = row.left?.path || row.path;
+    if (!sourcePath && !targetPath) return;
+
+    pushHistory(`Merge ${targetPath || sourcePath} Right ◂ Left`);
+    const sourceVal = row.right ? getValueAtPath(rightDoc.data, sourcePath) : undefined;
+
+    // When copying an unmatched array element from Right to Left (added_right), append to Left's array
+    if (row.right && !row.left && /\[\d+\]$/.test(sourcePath)) {
+      const parentPath = sourcePath.replace(/\[\d+\]$/, '');
+      const parentArr = getValueAtPath(leftDoc.data, parentPath);
+      if (Array.isArray(parentArr)) {
+        targetPath = `${parentPath}[${parentArr.length}]`;
+      }
+    }
+
+    const updatedLeftData = setValueAtPath(leftDoc.data, targetPath, sourceVal);
     const updatedLeftText = serializePreservingFormat(updatedLeftData, leftDoc);
     setLeftRaw(updatedLeftText);
     setCurrentPresetId('custom');
@@ -238,6 +458,9 @@ export default function App() {
 
   // Execute Confirmed Merge All (either skipping or including ignorable fields)
   const handleConfirmMergeAll = (includeIgnoredFields: boolean) => {
+    pushHistory(
+      `Merge All ${mergeAllModal.direction === 'leftToRight' ? 'Left ▸ Right' : 'Right ◂ Left'}`
+    );
     if (mergeAllModal.direction === 'leftToRight') {
       const mergedData = mergeDataTrees(
         leftDoc.data,
@@ -262,23 +485,33 @@ export default function App() {
 
   // Swap Panes
   const handleSwapPanes = () => {
+    pushHistory('Swap Left and Right panes');
     const tempLeft = leftRaw;
+    const tempLeftFmt = leftFormatOverride;
     setLeftRaw(rightRaw);
     setRightRaw(tempLeft);
+    setLeftFormatOverride(rightFormatOverride);
+    setRightFormatOverride(tempLeftFmt);
   };
 
   // Format Alignment Actions
   const handleAdoptFormat = (direction: 'leftToRight' | 'rightToLeft') => {
+    pushHistory(
+      direction === 'leftToRight' ? 'Adopt Left format on Right' : 'Adopt Right format on Left'
+    );
     if (direction === 'leftToRight') {
       const adopted = adoptFormat(leftDoc, rightDoc);
+      setRightFormatOverride(leftDoc.format);
       setRightRaw(adopted);
     } else {
       const adopted = adoptFormat(rightDoc, leftDoc);
+      setLeftFormatOverride(rightDoc.format);
       setLeftRaw(adopted);
     }
   };
 
   const handlePrettifyOpened = (side: 'left' | 'right') => {
+    pushHistory(`Prettify ${side} pane`);
     if (side === 'left') {
       setLeftRaw(prettifyOpened(leftDoc));
     } else {
@@ -287,23 +520,30 @@ export default function App() {
   };
 
   const handlePrettifyCondensed = (side: 'left' | 'right') => {
+    pushHistory(`Minify ${side} pane`);
     if (side === 'left') {
+      setLeftFormatOverride('json');
       setLeftRaw(prettifyCondensed(leftDoc));
     } else {
+      setRightFormatOverride('json');
       setRightRaw(prettifyCondensed(rightDoc));
     }
   };
 
   const handleExportPureJson = (side: 'left' | 'right') => {
+    pushHistory(`Strip ${side} pane to Pure JSON`);
     if (side === 'left') {
+      setLeftFormatOverride('json');
       setLeftRaw(exportPureJson(leftDoc));
     } else {
+      setRightFormatOverride('json');
       setRightRaw(exportPureJson(rightDoc));
     }
   };
 
   // YAML Tab Fixer Action
   const handleConvertYamlTabs = () => {
+    pushHistory('Convert YAML tabs to 2 spaces');
     if (leftDoc.yamlIssues && leftDoc.yamlIssues.length > 0) {
       setLeftRaw(normalizeTabsToSpaces(leftRaw));
     }
@@ -358,20 +598,153 @@ export default function App() {
     scrollToVisibleRowIndex(diffVisibleRowIndices[prevPointer]);
   }, [currentDiffIdxPointer, diffVisibleRowIndices, visibleRows]);
 
-  // Keyboard shortcut listener (F7 for prev, F8 for next)
+  const isAnyModalOpen =
+    isIgnoredFieldsModalOpen ||
+    isRawEditorOpen ||
+    isDiffReportModalOpen ||
+    isDocsModalOpen ||
+    mergeAllModal.isOpen;
+
+  // Keyboard & Clipboard shortcuts (F7/F8, Ctrl+Z/Y, scoped Ctrl+A, clean Ctrl+C, direct Ctrl+V)
   useEffect(() => {
+    const isModalOrExternalInput = (target: EventTarget | null) => {
+      const el = target as HTMLElement | null;
+      if (!el) return false;
+      // Allow live row inputs inside DiffPane to participate in pane-level Ctrl+A / Ctrl+C / Ctrl+V / Ctrl+Z
+      if (el.getAttribute('data-live-row-input') === 'true') {
+        return false;
+      }
+      return Boolean(
+        el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.tagName === 'SELECT' ||
+          el.isContentEditable
+      );
+    };
+
     const handleKeyDown = (e: KeyboardEvent) => {
+      const isExternalInput = isModalOrExternalInput(e.target);
+
       if (e.key === 'F8') {
         e.preventDefault();
         handleJumpNextDiff();
-      } else if (e.key === 'F7') {
+        return;
+      }
+      if (e.key === 'F7') {
         e.preventDefault();
         handleJumpPrevDiff();
+        return;
+      }
+
+      if (isExternalInput || isAnyModalOpen) return;
+
+      const keyLower = e.key.toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && keyLower === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleRedo();
+        } else {
+          handleUndo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && keyLower === 'y') {
+        e.preventDefault();
+        handleRedo();
+      } else if ((e.ctrlKey || e.metaKey) && keyLower === 'a') {
+        // Scoped Select-All: select only the active diff pane's code lines
+        const currentSide = focusedSideRef.current;
+        const paneEl = currentSide === 'left' ? leftScrollRef.current : rightScrollRef.current;
+        if (paneEl) {
+          e.preventDefault();
+          const activeEl = document.activeElement as HTMLElement | null;
+          if (activeEl && activeEl.getAttribute('data-live-row-input') === 'true') {
+            activeEl.blur();
+            paneEl.focus({ preventScroll: true });
+          }
+          const sel = window.getSelection();
+          if (sel) {
+            const range = document.createRange();
+            range.selectNodeContents(paneEl);
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }
+        }
+      } else if ((e.ctrlKey || e.metaKey) && keyLower === 'c') {
+        // Ensure programmatic Ctrl+C also writes clean formatted selection to clipboard
+        const currentSide = focusedSideRef.current;
+        const leftSelected = extractCleanPaneSelection(leftScrollRef.current, leftDoc.rawText);
+        const rightSelected = extractCleanPaneSelection(rightScrollRef.current, rightDoc.rawText);
+        const cleanToCopy =
+          (currentSide === 'left' ? leftSelected ?? rightSelected : rightSelected ?? leftSelected) ??
+          (currentSide === 'left' ? leftDoc.rawText : rightDoc.rawText);
+        navigator.clipboard?.writeText?.(cleanToCopy).catch(() => {});
+      } else if ((e.ctrlKey || e.metaKey) && keyLower === 'v') {
+        // Allow native `paste` event to fire first; if synthetic keydown in headless browser doesn't trigger `paste`, fallback to navigator.clipboard.readText()
+        const triggerTime = Date.now();
+        const targetSide = focusedSideRef.current;
+        setTimeout(async () => {
+          if (lastNativePasteTimeRef.current >= triggerTime) return;
+          try {
+            if (navigator.clipboard && navigator.clipboard.readText) {
+              const clipText = await navigator.clipboard.readText();
+              if (clipText && clipText.length > 0 && lastNativePasteTimeRef.current < triggerTime) {
+                lastNativePasteTimeRef.current = Date.now();
+                handlePasteIntoPane(targetSide, clipText);
+              }
+            }
+          } catch {
+            // Ignored if permission not granted; native paste event handles standard browser Ctrl+V
+          }
+        }, 60);
       }
     };
+
+    const handleGlobalCopy = (e: ClipboardEvent) => {
+      if (isModalOrExternalInput(e.target) || isAnyModalOpen) return;
+      const currentSide = focusedSideRef.current;
+      const leftSelected = extractCleanPaneSelection(leftScrollRef.current, leftDoc.rawText);
+      const rightSelected = extractCleanPaneSelection(rightScrollRef.current, rightDoc.rawText);
+      const cleanToCopy =
+        currentSide === 'left' ? leftSelected ?? rightSelected : rightSelected ?? leftSelected;
+      if (cleanToCopy !== null) {
+        e.preventDefault();
+        e.clipboardData?.setData('text/plain', cleanToCopy);
+        navigator.clipboard?.writeText?.(cleanToCopy).catch(() => {});
+      }
+    };
+
+    const handleGlobalPaste = (e: ClipboardEvent) => {
+      if (isModalOrExternalInput(e.target) || isAnyModalOpen) return;
+      const pastedText = e.clipboardData?.getData('text/plain');
+      if (pastedText && pastedText.length > 0) {
+        e.preventDefault();
+        lastNativePasteTimeRef.current = Date.now();
+        const targetEl = e.target as HTMLElement | null;
+        const closestPane = targetEl?.closest?.('[data-pane-side]')?.getAttribute('data-pane-side');
+        const targetSide =
+          closestPane === 'left' || closestPane === 'right' ? closestPane : focusedSideRef.current;
+        handlePasteIntoPane(targetSide, pastedText);
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleJumpNextDiff, handleJumpPrevDiff]);
+    window.addEventListener('copy', handleGlobalCopy);
+    window.addEventListener('paste', handleGlobalPaste);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('copy', handleGlobalCopy);
+      window.removeEventListener('paste', handleGlobalPaste);
+    };
+  }, [
+    handleJumpNextDiff,
+    handleJumpPrevDiff,
+    handleUndo,
+    handleRedo,
+    handlePasteIntoPane,
+    focusedSide,
+    isAnyModalOpen,
+    leftDoc.rawText,
+    rightDoc.rawText,
+  ]);
 
   const [mobilePaneView, setMobilePaneView] = useState<'split' | 'left' | 'right'>('split');
 
@@ -393,6 +766,7 @@ export default function App() {
         onToggleBottomInspector={setShowBottomInspector}
         ignoredFields={ignoredFields}
         onOpenIgnoredFieldsModal={() => setIsIgnoredFieldsModalOpen(true)}
+        onOpenDiffReportModal={() => setIsDiffReportModalOpen(true)}
         onOpenDocsModal={() => setIsDocsModalOpen(true)}
         onAdoptFormat={handleAdoptFormat}
         onPrettifyOpened={handlePrettifyOpened}
@@ -409,15 +783,24 @@ export default function App() {
         onToggleRawEditor={() => setIsRawEditorOpen(true)}
         onExpandAll={handleExpandAll}
         onCollapseAll={handleCollapseAll}
+        canUndo={undoStack.length > 0}
+        canRedo={redoStack.length > 0}
+        undoLabel={undoStack[undoStack.length - 1]?.label}
+        redoLabel={redoStack[redoStack.length - 1]?.label}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
       />
 
-      {/* Mobile Portrait View Toggle Bar (hidden in landscape / wider screens >= 640px so Split & Gutter always work in landscape) */}
+      {/* Mobile Portrait View Toggle Bar (hidden in landscape / wider screens >= 640px) */}
       <div className="sm:hidden flex items-center justify-between px-3 py-1 bg-zinc-900 border-b border-zinc-800 text-xs shrink-0 select-none">
         <span className="text-zinc-400 font-medium">View Mode:</span>
         <div className="flex items-center rounded bg-zinc-800 p-0.5 border border-zinc-700">
           <button
             type="button"
-            onClick={() => setMobilePaneView('left')}
+            onClick={() => {
+              setMobilePaneView('left');
+              activatePane('left');
+            }}
             className={`px-2 py-0.5 rounded text-[11px] transition cursor-pointer ${
               mobilePaneView === 'left' ? 'bg-cyan-600 text-white font-medium' : 'text-zinc-400'
             }`}
@@ -435,7 +818,10 @@ export default function App() {
           </button>
           <button
             type="button"
-            onClick={() => setMobilePaneView('right')}
+            onClick={() => {
+              setMobilePaneView('right');
+              activatePane('right');
+            }}
             className={`px-2 py-0.5 rounded text-[11px] transition cursor-pointer ${
               mobilePaneView === 'right' ? 'bg-cyan-600 text-white font-medium' : 'text-zinc-400'
             }`}
@@ -444,6 +830,33 @@ export default function App() {
           </button>
         </div>
       </div>
+
+      {/* Temporary Paste Validation Error Notification Banner */}
+      {pasteError && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          data-testid="paste-error-notification"
+          className="px-3 py-2 bg-rose-950/95 border-b border-rose-500/80 text-rose-100 text-xs flex items-center justify-between gap-3 shrink-0 z-40 shadow-lg"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertTriangle className="h-4 w-4 text-rose-400 shrink-0" />
+            <span className="font-semibold text-rose-200 shrink-0">
+              Paste Rejected ({pasteError.side === 'left' ? 'Left' : 'Right'} Pane):
+            </span>
+            <span className="font-mono text-rose-100 truncate">{pasteError.message}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPasteError(null)}
+            className="p-1 rounded hover:bg-rose-900/80 text-rose-300 hover:text-white transition cursor-pointer shrink-0"
+            aria-label="Dismiss paste error notification"
+            title="Dismiss notification"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Main 2-Pane Diff Viewer with Central Action Gutter */}
       <main className="flex-1 flex overflow-hidden relative min-h-0">
@@ -454,15 +867,26 @@ export default function App() {
             title="Reference / Target"
             doc={leftDoc}
             rows={rows}
-            activePath={activeRow?.path || activePath}
+            activePath={activeRow?.left?.path || activeRow?.path || activePath}
             onSelectPath={handleSelectPath}
             foldedBlocks={foldedBlocks}
             onToggleBlockFold={handleToggleBlockFold}
             onOpenRawEditor={() => setIsRawEditorOpen(true)}
-            onClear={() => setLeftRaw('{}')}
+            onClear={() => {
+              pushHistory('Clear Left pane');
+              setLeftRaw('{}');
+            }}
             onChangeFormat={(fmt) => handleChangePaneFormat('left', fmt)}
             inlineEditMode={inlineEditMode}
             onInlineEditValue={(path, val) => handleInlineEditValue('left', path, val)}
+            onLiveEditLine={(path, origKey, newKey, val, pushHist) =>
+              handleLiveEditLine('left', path, origKey, newKey, val, pushHist)
+            }
+            isFocusedPane={focusedSide === 'left'}
+            onFocusPane={() => activatePane('left')}
+            onPasteText={(text) => handlePasteIntoPane('left', text)}
+            pastedFeedback={pastedFeedbackSide === 'left'}
+            pasteError={pasteError?.side === 'left' ? pasteError.message : null}
             scrollRef={leftScrollRef}
             onScroll={(e) => handleScroll(e, 'left')}
           />
@@ -489,22 +913,33 @@ export default function App() {
             title="Compared / Rearranged (Option A)"
             doc={rightDoc}
             rows={rows}
-            activePath={activeRow?.path || activePath}
+            activePath={activeRow?.right?.path || activeRow?.path || activePath}
             onSelectPath={handleSelectPath}
             foldedBlocks={foldedBlocks}
             onToggleBlockFold={handleToggleBlockFold}
             onOpenRawEditor={() => setIsRawEditorOpen(true)}
-            onClear={() => setRightRaw('{}')}
+            onClear={() => {
+              pushHistory('Clear Right pane');
+              setRightRaw('{}');
+            }}
             onChangeFormat={(fmt) => handleChangePaneFormat('right', fmt)}
             inlineEditMode={inlineEditMode}
             onInlineEditValue={(path, val) => handleInlineEditValue('right', path, val)}
+            onLiveEditLine={(path, origKey, newKey, val, pushHist) =>
+              handleLiveEditLine('right', path, origKey, newKey, val, pushHist)
+            }
+            isFocusedPane={focusedSide === 'right'}
+            onFocusPane={() => activatePane('right')}
+            onPasteText={(text) => handlePasteIntoPane('right', text)}
+            pastedFeedback={pastedFeedbackSide === 'right'}
+            pasteError={pasteError?.side === 'right' ? pasteError.message : null}
             scrollRef={rightScrollRef}
             onScroll={(e) => handleScroll(e, 'right')}
           />
         </div>
       </main>
 
-      {/* Optional Beyond Compare Bottom Full-Line Comparison Inspector */}
+      {/* Optional Split Bottom Full-Line Comparison Inspector */}
       {showBottomInspector && (
         <BottomLineInspector
           row={activeRow}
@@ -544,6 +979,19 @@ export default function App() {
         onConfirmMerge={handleConfirmMergeAll}
       />
 
+      {/* Export Diff Report Modal */}
+      <DiffReportModal
+        isOpen={isDiffReportModalOpen}
+        onClose={() => setIsDiffReportModalOpen(false)}
+        leftDoc={leftDoc}
+        rightDoc={rightDoc}
+        rows={rows}
+        stats={stats}
+        ignoredFields={ignoredFields}
+        ignoreListOrder={ignoreListOrder}
+        ignoreQuoteStyle={ignoreQuoteStyle}
+      />
+
       {/* Raw Text Editor Modal */}
       <RawEditorModal
         isOpen={isRawEditorOpen}
@@ -551,6 +999,9 @@ export default function App() {
         leftRaw={leftRaw}
         rightRaw={rightRaw}
         onApply={(newLeft, newRight) => {
+          pushHistory('Edit raw document text');
+          setLeftFormatOverride(undefined);
+          setRightFormatOverride(undefined);
           setLeftRaw(newLeft);
           setRightRaw(newRight);
           setCurrentPresetId('custom');

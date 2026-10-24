@@ -9,6 +9,30 @@ import { DocumentFormat, ParsedDocument } from './types';
 import { convertTabsToSpaces } from './yamlLinter';
 
 /**
+ * Recursively prepares a JavaScript value tree for TOML serialization.
+ * TOML v1.0 does not have a native null keyword, so null properties are converted
+ * to empty strings "" (or omitted if undefined) so stringifyToml never fails.
+ */
+function sanitizeForToml(val: any): any {
+  if (val === null || val === undefined) {
+    return '';
+  }
+  if (Array.isArray(val)) {
+    return val.map((item) => sanitizeForToml(item));
+  }
+  if (typeof val === 'object') {
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(val)) {
+      if (v !== undefined) {
+        out[k] = sanitizeForToml(v);
+      }
+    }
+    return out;
+  }
+  return val;
+}
+
+/**
  * Converts a parsed document's data to any target format (json, jsonc, yaml, toml).
  */
 export function convertDocumentToFormat(
@@ -19,7 +43,8 @@ export function convertDocumentToFormat(
   const data = doc.data ?? {};
   if (targetFormat === 'toml') {
     try {
-      return stringifyToml(data).trimEnd();
+      const rootObj = Array.isArray(data) ? { items: data } : data;
+      return stringifyToml(sanitizeForToml(rootObj)).trimEnd();
     } catch {
       return JSON.stringify(data, null, indentSize);
     }
@@ -28,7 +53,11 @@ export function convertDocumentToFormat(
     return YAML.stringify(data, { indent: indentSize }).trimEnd();
   }
   if (targetFormat === 'jsonc') {
-    return `// Converted to JSONC\n${JSON.stringify(data, null, indentSize)}`;
+    const jsonStr = JSON.stringify(data, null, indentSize);
+    if (jsonStr.startsWith('{\n')) {
+      return `{\n  // JSONC configuration (comments & trailing commas supported)\n${jsonStr.slice(2)}`;
+    }
+    return `// JSONC configuration\n${jsonStr}`;
   }
   return JSON.stringify(data, null, indentSize);
 }
@@ -37,17 +66,7 @@ export function convertDocumentToFormat(
  * Prettifies document data into formatted multiline text.
  */
 export function prettifyOpened(doc: ParsedDocument, indentSize = 2): string {
-  if (doc.format === 'toml') {
-    try {
-      return stringifyToml(doc.data ?? {}).trimEnd();
-    } catch {
-      return JSON.stringify(doc.data, null, indentSize);
-    }
-  }
-  if (doc.format === 'yaml') {
-    return YAML.stringify(doc.data, { indent: indentSize }).trimEnd();
-  }
-  return JSON.stringify(doc.data, null, indentSize);
+  return convertDocumentToFormat(doc, doc.format, indentSize);
 }
 
 /**
@@ -68,22 +87,11 @@ export function exportPureJson(doc: ParsedDocument, indentSize = 2): string {
  * Adopts format of source document and applies it to target document's data.
  */
 export function adoptFormat(sourceDoc: ParsedDocument, targetDoc: ParsedDocument): string {
-  if (sourceDoc.format === 'toml') {
-    try {
-      return stringifyToml(targetDoc.data ?? {}).trimEnd();
-    } catch {
-      return JSON.stringify(targetDoc.data, null, 2);
-    }
-  }
-
-  if (sourceDoc.format === 'yaml') {
-    return YAML.stringify(targetDoc.data, {
-      indent: sourceDoc.indentStyle.size || 2,
-    }).trimEnd();
-  }
-
-  const indent = sourceDoc.indentStyle.type === 'tab' ? '\t' : ' '.repeat(sourceDoc.indentStyle.size || 2);
-  return JSON.stringify(targetDoc.data, null, indent);
+  return convertDocumentToFormat(
+    targetDoc,
+    sourceDoc.format,
+    sourceDoc.indentStyle.size || 2
+  );
 }
 
 /**

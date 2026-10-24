@@ -15,6 +15,9 @@ import adr003Md from '../../docs/adr/ADR-003-aggressive-jsonc-repair-breakpoint-
 import adr004Md from '../../docs/adr/ADR-004-k8s-crd-ignored-fields-selective-merge.md?raw';
 import adr005Md from '../../docs/adr/ADR-005-inplace-patching-bracket-jsonpath.md?raw';
 import adr006Md from '../../docs/adr/ADR-006-three-way-scroll-sync-mobile-landscape.md?raw';
+import adr007Md from '../../docs/adr/ADR-007-undo-redo-diff-report-and-format-realignment.md?raw';
+import adr008Md from '../../docs/adr/ADR-008-daily-clipboard-and-unordered-array-alignment.md?raw';
+import adr009Md from '../../docs/adr/ADR-009-always-editable-live-editor-and-paste-validation.md?raw';
 
 interface DocsModalProps {
   isOpen: boolean;
@@ -93,10 +96,31 @@ const DOC_ENTRIES: DocEntry[] = [
     category: 'Architecture Decision Records (ADRs)',
     content: adr006Md,
   },
+  {
+    id: 'adr-007',
+    title: 'ADR-007: Undo/Redo, Reports & Realignment',
+    path: '/docs/adr/ADR-007-undo-redo-diff-report-and-format-realignment.md',
+    category: 'Architecture Decision Records (ADRs)',
+    content: adr007Md,
+  },
+  {
+    id: 'adr-008',
+    title: 'ADR-008: Clipboard UX & Unordered Arrays',
+    path: '/docs/adr/ADR-008-daily-clipboard-and-unordered-array-alignment.md',
+    category: 'Architecture Decision Records (ADRs)',
+    content: adr008Md,
+  },
+  {
+    id: 'adr-009',
+    title: 'ADR-009: Live Editor & Paste Validation',
+    path: '/docs/adr/ADR-009-always-editable-live-editor-and-paste-validation.md',
+    category: 'Architecture Decision Records (ADRs)',
+    content: adr009Md,
+  },
 ];
 
 export const DocsModal: React.FC<DocsModalProps> = ({ isOpen, onClose }) => {
-  const [selectedId, setSelectedId] = useState<string>('playbook');
+  const [selectedId, setSelectedId] = useState<string>('iterations');
   const [copied, setCopied] = useState(false);
 
   if (!isOpen) return null;

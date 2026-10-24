@@ -124,7 +124,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
               ? 'bg-emerald-950/70 border-emerald-700 text-emerald-300'
               : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'
           }`}
-          title="Toggle Beyond Compare-style bottom full-line comparison inspector"
+          title="Toggle split full-line comparison inspector"
         >
           <Columns className="h-3 w-3" />
           <span>{showBottomInspector ? 'Bottom Line Bar: ON' : 'Bottom Line Bar: OFF'}</span>

@@ -21,6 +21,9 @@ import {
   Pencil,
   Columns,
   BookOpen,
+  Undo2,
+  Redo2,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { ThemeType } from '../diff/types';
 import { PRESETS, PresetDemo } from '../diff/presets';
@@ -38,6 +41,7 @@ interface HeaderProps {
   onToggleBottomInspector: (val: boolean) => void;
   ignoredFields: string[];
   onOpenIgnoredFieldsModal: () => void;
+  onOpenDiffReportModal: () => void;
   onOpenDocsModal: () => void;
   onAdoptFormat: (direction: 'leftToRight' | 'rightToLeft') => void;
   onPrettifyOpened: (side: 'left' | 'right') => void;
@@ -54,6 +58,12 @@ interface HeaderProps {
   onToggleRawEditor: () => void;
   onExpandAll: () => void;
   onCollapseAll: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  undoLabel?: string;
+  redoLabel?: string;
+  onUndo: () => void;
+  onRedo: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -69,6 +79,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleBottomInspector,
   ignoredFields,
   onOpenIgnoredFieldsModal,
+  onOpenDiffReportModal,
   onOpenDocsModal,
   onAdoptFormat,
   onPrettifyOpened,
@@ -85,6 +96,12 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleRawEditor,
   onExpandAll,
   onCollapseAll,
+  canUndo,
+  canRedo,
+  undoLabel,
+  redoLabel,
+  onUndo,
+  onRedo,
 }) => {
   const [showPresetsMenu, setShowPresetsMenu] = useState(false);
   const [showFormatMenu, setShowFormatMenu] = useState(false);
@@ -92,17 +109,14 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="border-b border-[var(--border-color,#27272a)] bg-[var(--bg-header,#18181b)] backdrop-blur px-3 py-2 max-h-[500px]:py-1 flex flex-wrap items-center justify-between gap-2 text-sm select-none relative z-50 shrink-0">
-      {/* Brand & Preset Selector */}
-      <div className="flex items-center gap-2.5">
+      {/* Brand, Preset Selector & Undo/Redo */}
+      <div className="flex items-center gap-2">
         <div className="flex items-center gap-2 font-bold tracking-tight text-white">
           <div className="h-6 w-6 rounded-md bg-gradient-to-tr from-cyan-600 to-emerald-500 flex items-center justify-center text-white shadow-sm shadow-cyan-500/20">
             <GitCompare className="h-3.5 w-3.5" />
           </div>
           <span className="text-sm sm:text-base font-semibold tracking-wide bg-gradient-to-r from-cyan-200 via-emerald-200 to-white bg-clip-text text-transparent">
             SemantiCompare
-          </span>
-          <span className="hidden xl:inline-block text-[11px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 font-normal border border-zinc-700/60">
-            JSONC • YAML • TOML
           </span>
         </div>
 
@@ -116,7 +130,7 @@ export const Header: React.FC<HeaderProps> = ({
             aria-label="Preset samples"
           >
             <Sparkles className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-            <span className="truncate max-w-[150px] sm:max-w-none">
+            <span className="truncate max-w-[140px] sm:max-w-none">
               Preset: {PRESETS.find((p) => p.id === currentPreset)?.name || 'Custom'}
             </span>
             <ChevronDown className="h-3 w-3 text-zinc-400 shrink-0" />
@@ -149,18 +163,53 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
         </div>
+
+        {/* Undo / Redo Buttons */}
+        <div className="flex items-center rounded border border-zinc-700 bg-zinc-800 overflow-hidden text-xs">
+          <button
+            type="button"
+            onClick={onUndo}
+            disabled={!canUndo}
+            className={`px-2 py-1 flex items-center gap-1 transition ${
+              canUndo
+                ? 'hover:bg-zinc-700 text-zinc-200 cursor-pointer'
+                : 'text-zinc-600 cursor-not-allowed opacity-60'
+            }`}
+            title={canUndo ? `Undo: ${undoLabel || 'last change'} (Ctrl+Z)` : 'Nothing to undo'}
+            aria-label="Undo"
+          >
+            <Undo2 className="h-3.5 w-3.5" />
+            <span>Undo</span>
+          </button>
+          <div className="w-px h-3.5 bg-zinc-700" />
+          <button
+            type="button"
+            onClick={onRedo}
+            disabled={!canRedo}
+            className={`px-2 py-1 flex items-center gap-1 transition ${
+              canRedo
+                ? 'hover:bg-zinc-700 text-zinc-200 cursor-pointer'
+                : 'text-zinc-600 cursor-not-allowed opacity-60'
+            }`}
+            title={canRedo ? `Redo: ${redoLabel || 'change'} (Ctrl+Y)` : 'Nothing to redo'}
+            aria-label="Redo"
+          >
+            <Redo2 className="h-3.5 w-3.5" />
+            <span>Redo</span>
+          </button>
+        </div>
       </div>
 
       {/* Center Tool Buttons */}
       <div className="flex items-center flex-wrap gap-1.5">
-        {/* Inline Edit Mode Toggle */}
+        {/* Live Editor Mode Toggle (Default ON) */}
         <label
           className={`flex items-center gap-1.5 px-2 py-1 rounded border text-xs cursor-pointer select-none transition ${
             inlineEditMode
               ? 'bg-cyan-950/70 border-cyan-600/80 text-cyan-200'
               : 'bg-zinc-800/80 hover:bg-zinc-800 text-zinc-300 border-zinc-700'
           }`}
-          title="Click or double-click any primitive value in the diff rows to edit inline without entering raw edit mode"
+          title="Keep both panes editable at all times like a live editor (click any line and write immediately)"
         >
           <input
             type="checkbox"
@@ -169,17 +218,17 @@ export const Header: React.FC<HeaderProps> = ({
             className="rounded border-zinc-600 bg-zinc-900 text-cyan-500 focus:ring-0 cursor-pointer h-3.5 w-3.5"
           />
           <Pencil className="h-3 w-3 text-cyan-400" />
-          <span>Inline Edit</span>
+          <span>Live Editor</span>
         </label>
 
-        {/* Beyond Compare Bottom Line Bar Toggle */}
+        {/* Split Bottom Line Bar Toggle */}
         <label
           className={`flex items-center gap-1.5 px-2 py-1 rounded border text-xs cursor-pointer select-none transition ${
             showBottomInspector
               ? 'bg-emerald-950/60 border-emerald-600/70 text-emerald-200'
               : 'bg-zinc-800/80 hover:bg-zinc-800 text-zinc-300 border-zinc-700'
           }`}
-          title="Show or hide the Beyond Compare-style bottom full-line comparison inspector"
+          title="Show or hide the bottom split full-line comparison inspector"
         >
           <input
             type="checkbox"
@@ -348,7 +397,7 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Right Action Tools: Full Sync, Raw Editor, Docs, Swap, Theme */}
+      {/* Right Action Tools: Full Sync, Export Report, Raw Editor, Docs, Swap, Theme */}
       <div className="flex items-center gap-1.5">
         {/* Full Document Merge Buttons */}
         <div className="flex items-center rounded border border-zinc-700 bg-zinc-800 overflow-hidden text-xs">
@@ -356,7 +405,7 @@ export const Header: React.FC<HeaderProps> = ({
             type="button"
             onClick={onMergeAllLeftToRight}
             className="px-2 py-1 hover:bg-zinc-700 text-cyan-300 flex items-center gap-1 transition cursor-pointer"
-            title="Beyond Compare Action: Merge Left to Right (asks whether to skip or include ignorable fields)"
+            title="Full Sync: Merge Left to Right (asks whether to skip or include ignorable fields)"
           >
             <span>Merge All</span>
             <ChevronsRight className="h-3.5 w-3.5" />
@@ -366,12 +415,23 @@ export const Header: React.FC<HeaderProps> = ({
             type="button"
             onClick={onMergeAllRightToLeft}
             className="px-2 py-1 hover:bg-zinc-700 text-emerald-300 flex items-center gap-1 transition cursor-pointer"
-            title="Beyond Compare Action: Merge Right to Left (asks whether to skip or include ignorable fields)"
+            title="Full Sync: Merge Right to Left (asks whether to skip or include ignorable fields)"
           >
             <ChevronsLeft className="h-3.5 w-3.5" />
             <span>Merge All</span>
           </button>
         </div>
+
+        {/* Export Diff Report Button */}
+        <button
+          type="button"
+          onClick={onOpenDiffReportModal}
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-emerald-950/70 hover:bg-emerald-900 text-emerald-200 border border-emerald-700/80 text-xs font-medium transition cursor-pointer"
+          title="Export a structured Diff Report (Markdown, JSON, or Plain Text)"
+        >
+          <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-400" />
+          <span>Export Report</span>
+        </button>
 
         {/* Swap Panes */}
         <button

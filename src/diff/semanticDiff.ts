@@ -214,6 +214,190 @@ function formatKey(
 let rowCounter = 0;
 
 /**
+ * Common identity keys used to match objects inside unordered arrays
+ * (e.g. Kubernetes containers/env/ports/volumes, package manifests, service configs).
+ */
+const ARRAY_OBJECT_IDENTITY_KEYS = [
+  'name',
+  'id',
+  'key',
+  'containerPort',
+  'mountPath',
+  'path',
+  'host',
+  'service',
+  'app',
+  'uid',
+  'manager',
+];
+
+function isPlainObject(v: any): v is Record<string, any> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+/**
+ * Computes a structural & value similarity score in [0, 1] between two composite items
+ * so modified objects in unordered lists remain aligned side-by-side instead of splitting
+ * into disconnected delete + add blocks.
+ */
+function computeItemSimilarity(a: any, b: any, ignoreQuoteStyle: boolean): number {
+  if (isPlainObject(a) && isPlainObject(b)) {
+    const keysA = Object.keys(a);
+    const keysB = Object.keys(b);
+    const unionKeys = new Set([...keysA, ...keysB]);
+    if (unionKeys.size === 0) return 1;
+
+    const sharedKeys = keysA.filter((k) => Object.prototype.hasOwnProperty.call(b, k));
+    if (sharedKeys.length === 0) return 0;
+
+    const keySchemaScore = sharedKeys.length / unionKeys.size;
+    let matchingValues = 0;
+    for (const k of sharedKeys) {
+      if (areValuesEqual(a[k], b[k], true, ignoreQuoteStyle)) {
+        matchingValues += 1;
+      } else if (isPlainObject(a[k]) && isPlainObject(b[k])) {
+        matchingValues += 0.5 * computeItemSimilarity(a[k], b[k], ignoreQuoteStyle);
+      }
+    }
+    const valueScore = matchingValues / unionKeys.size;
+    return keySchemaScore * 0.6 + valueScore * 0.4;
+  }
+
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length === 0 && b.length === 0) return 1;
+    const maxLen = Math.max(a.length, b.length);
+    if (maxLen === 0) return 1;
+    let matches = 0;
+    const usedB = new Set<number>();
+    for (const itemA of a) {
+      for (let j = 0; j < b.length; j++) {
+        if (!usedB.has(j) && areValuesEqual(itemA, b[j], true, ignoreQuoteStyle)) {
+          usedB.add(j);
+          matches++;
+          break;
+        }
+      }
+    }
+    return matches / maxLen;
+  }
+
+  return 0;
+}
+
+/**
+ * Multi-pass alignment for arrays when ignoreListOrder is enabled:
+ * Pass 1: Exact deep semantic equality match.
+ * Pass 2: Object identity key match (e.g. matching env vars or containers by `name` or `id` even when values changed).
+ * Pass 3: Structural similarity match for modified objects/arrays (e.g. matching objects sharing >= 35% schema/values).
+ * Pass 4: Remaining unmatched Left items (deleted_right) and Right items (added_right).
+ */
+function alignUnorderedArrayItems(
+  leftArr: any[],
+  rightArr: any[],
+  ignoreQuoteStyle: boolean
+): { leftItem?: any; rightItem?: any; leftIdx?: number; rightIdx?: number }[] {
+  const matchedLeftToRight = new Map<number, number>();
+  const matchedRight = new Set<number>();
+
+  // Pass 1: Exact semantic match
+  for (let i = 0; i < leftArr.length; i++) {
+    const itemL = leftArr[i];
+    for (let j = 0; j < rightArr.length; j++) {
+      if (!matchedRight.has(j) && areValuesEqual(itemL, rightArr[j], true, ignoreQuoteStyle)) {
+        matchedLeftToRight.set(i, j);
+        matchedRight.add(j);
+        break;
+      }
+    }
+  }
+
+  // Pass 2: Object identity key match (e.g. `name`, `id`, `key`, `containerPort`)
+  for (let i = 0; i < leftArr.length; i++) {
+    if (matchedLeftToRight.has(i)) continue;
+    const itemL = leftArr[i];
+    if (!isPlainObject(itemL)) continue;
+
+    let foundIdx = -1;
+    for (const idKey of ARRAY_OBJECT_IDENTITY_KEYS) {
+      if (itemL[idKey] !== undefined && itemL[idKey] !== null && typeof itemL[idKey] !== 'object') {
+        for (let j = 0; j < rightArr.length; j++) {
+          if (matchedRight.has(j)) continue;
+          const itemR = rightArr[j];
+          if (
+            isPlainObject(itemR) &&
+            itemR[idKey] !== undefined &&
+            areValuesEqual(itemL[idKey], itemR[idKey], true, ignoreQuoteStyle)
+          ) {
+            foundIdx = j;
+            break;
+          }
+        }
+        if (foundIdx >= 0) break;
+      }
+    }
+
+    if (foundIdx >= 0) {
+      matchedLeftToRight.set(i, foundIdx);
+      matchedRight.add(foundIdx);
+    }
+  }
+
+  // Pass 3: Structural similarity match for remaining modified objects/arrays
+  const candidates: { leftIdx: number; rightIdx: number; score: number }[] = [];
+  for (let i = 0; i < leftArr.length; i++) {
+    if (matchedLeftToRight.has(i)) continue;
+    const itemL = leftArr[i];
+    if (!isPlainObject(itemL) && !Array.isArray(itemL)) continue;
+
+    for (let j = 0; j < rightArr.length; j++) {
+      if (matchedRight.has(j)) continue;
+      const itemR = rightArr[j];
+      if (isPlainObject(itemL) !== isPlainObject(itemR) || Array.isArray(itemL) !== Array.isArray(itemR)) {
+        continue;
+      }
+      const sim = computeItemSimilarity(itemL, itemR, ignoreQuoteStyle);
+      if (sim >= 0.35) {
+        // Add tiny positional tie-breaker so items at same index prefer each other on equal similarity
+        const tieBreaker = 0.001 / (1 + Math.abs(i - j));
+        candidates.push({ leftIdx: i, rightIdx: j, score: sim + tieBreaker });
+      }
+    }
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  for (const cand of candidates) {
+    if (!matchedLeftToRight.has(cand.leftIdx) && !matchedRight.has(cand.rightIdx)) {
+      matchedLeftToRight.set(cand.leftIdx, cand.rightIdx);
+      matchedRight.add(cand.rightIdx);
+    }
+  }
+
+  // Build final aligned pairs in Left's order, followed by unmatched Right items
+  const pairs: { leftItem?: any; rightItem?: any; leftIdx?: number; rightIdx?: number }[] = [];
+  for (let i = 0; i < leftArr.length; i++) {
+    if (matchedLeftToRight.has(i)) {
+      const rIdx = matchedLeftToRight.get(i)!;
+      pairs.push({
+        leftItem: leftArr[i],
+        rightItem: rightArr[rIdx],
+        leftIdx: i,
+        rightIdx: rIdx,
+      });
+    } else {
+      pairs.push({ leftItem: leftArr[i], leftIdx: i });
+    }
+  }
+
+  for (let j = 0; j < rightArr.length; j++) {
+    if (!matchedRight.has(j)) {
+      pairs.push({ rightItem: rightArr[j], rightIdx: j });
+    }
+  }
+
+  return pairs;
+}
+
+/**
  * Recursively aligns Left and Right data trees using Option A:
  * Rearranges Right pane keys to match Left pane order, pushing unique Right keys to the bottom.
  */
@@ -228,10 +412,11 @@ function alignNodes(
   rightFormat: DocumentFormat,
   leftQuote: 'single' | 'double',
   rightQuote: 'single' | 'double',
-  ancestorBlockIds: string[] = []
+  ancestorBlockIds: string[] = [],
+  rightPath: string = path
 ): AlignedDiffRow[] {
   const rows: AlignedDiffRow[] = [];
-  const currentBlockId = `block_${++rowCounter}`;
+  const currentBlockId = `block_${path || '$'}`;
   const isIgnored = isFieldIgnored(key, path, options.ignoredFields);
   const ignoreQuoteStyle = options.ignoreQuoteStyle !== false;
 
@@ -260,7 +445,7 @@ function alignNodes(
     return generateSingleSideRows(
       rightVal,
       key,
-      path,
+      rightPath,
       depth,
       'right',
       'added_right',
@@ -295,7 +480,7 @@ function alignNodes(
       const rightValStr = formatPrimitiveValue(rightVal, rightQuote, rightFormat, ignoreQuoteStyle);
       leftRows[0].right = {
         key,
-        path,
+        path: rightPath,
         formattedText: formatKeyValueLine(key, rightValStr, rightFormat, rightQuote, ignoreQuoteStyle),
         value: rightVal,
         valueType: rightType,
@@ -313,7 +498,7 @@ function alignNodes(
     const rightRows = generateSingleSideRows(
       rightVal,
       key,
-      path,
+      rightPath,
       depth,
       'right',
       'modified',
@@ -364,7 +549,7 @@ function alignNodes(
 
     const rightCell: AlignedCell = {
       key,
-      path,
+      path: rightPath,
       formattedText: formatKeyValueLine(key, rightValStr, rightFormat, rightQuote, ignoreQuoteStyle),
       value: rightVal,
       valueType: rightType,
@@ -444,7 +629,7 @@ function alignNodes(
         },
         right: {
           key,
-          path,
+          path: rightPath,
           formattedText: headerRightText || '{',
           value: rightVal,
           valueType: 'object',
@@ -461,19 +646,21 @@ function alignNodes(
 
     // Recurse child keys
     for (const childKey of alignedKeys) {
-      const childPath = buildChildPath(path, childKey);
+      const childLeftPath = buildChildPath(path, childKey);
+      const childRightPath = buildChildPath(rightPath, childKey);
       const childRows = alignNodes(
         leftVal[childKey],
         rightVal[childKey],
         childKey,
-        childPath,
+        childLeftPath,
         emitHeader ? depth + 1 : depth,
         options,
         leftFormat,
         rightFormat,
         leftQuote,
         rightQuote,
-        childAncestors
+        childAncestors,
+        childRightPath
       );
       rows.push(...childRows);
     }
@@ -494,7 +681,7 @@ function alignNodes(
           blockId: currentBlockId,
         },
         right: {
-          path,
+          path: rightPath,
           formattedText: '}',
           valueType: 'object',
           indent: depth * 2,
@@ -552,7 +739,7 @@ function alignNodes(
         },
         right: {
           key,
-          path,
+          path: rightPath,
           formattedText: headerRightText || '[',
           value: rightVal,
           valueType: 'array',
@@ -568,31 +755,10 @@ function alignNodes(
     }
 
     // Determine array alignment:
-    const pairs: { leftItem?: any; rightItem?: any; leftIdx?: number; rightIdx?: number }[] = [];
+    let pairs: { leftItem?: any; rightItem?: any; leftIdx?: number; rightIdx?: number }[] = [];
 
     if (options.ignoreListOrder) {
-      const matchedRight = new Set<number>();
-      for (let i = 0; i < leftArr.length; i++) {
-        const itemL = leftArr[i];
-        let matchedIdx = -1;
-        for (let j = 0; j < rightArr.length; j++) {
-          if (!matchedRight.has(j) && areValuesEqual(itemL, rightArr[j], true, ignoreQuoteStyle)) {
-            matchedIdx = j;
-            break;
-          }
-        }
-        if (matchedIdx >= 0) {
-          matchedRight.add(matchedIdx);
-          pairs.push({ leftItem: itemL, rightItem: rightArr[matchedIdx], leftIdx: i, rightIdx: matchedIdx });
-        } else {
-          pairs.push({ leftItem: itemL, leftIdx: i });
-        }
-      }
-      for (let j = 0; j < rightArr.length; j++) {
-        if (!matchedRight.has(j)) {
-          pairs.push({ rightItem: rightArr[j], rightIdx: j });
-        }
-      }
+      pairs = alignUnorderedArrayItems(leftArr, rightArr, ignoreQuoteStyle);
     } else {
       const maxLen = Math.max(leftArr.length, rightArr.length);
       for (let i = 0; i < maxLen; i++) {
@@ -606,22 +772,25 @@ function alignNodes(
     }
 
     pairs.forEach((pair) => {
-      const idx = pair.leftIdx !== undefined ? pair.leftIdx : pair.rightIdx!;
-      const itemPath = `${path}[${idx}]`;
-      const itemKey = `[${idx}]`;
+      const leftIdx = pair.leftIdx !== undefined ? pair.leftIdx : pair.rightIdx!;
+      const rightIdx = pair.rightIdx !== undefined ? pair.rightIdx : pair.leftIdx!;
+      const leftItemPath = `${path}[${leftIdx}]`;
+      const rightItemPath = `${rightPath}[${rightIdx}]`;
+      const itemKey = `[${leftIdx}]`;
 
       const childRows = alignNodes(
         pair.leftItem,
         pair.rightItem,
         itemKey,
-        itemPath,
+        leftItemPath,
         emitHeader ? depth + 1 : depth,
         options,
         leftFormat,
         rightFormat,
         leftQuote,
         rightQuote,
-        childAncestors
+        childAncestors,
+        rightItemPath
       );
       rows.push(...childRows);
     });
@@ -641,7 +810,7 @@ function alignNodes(
           blockId: currentBlockId,
         },
         right: {
-          path,
+          path: rightPath,
           formattedText: ']',
           valueType: 'array',
           indent: depth * 2,
@@ -682,7 +851,7 @@ function generateSingleSideRows(
   const rows: AlignedDiffRow[] = [];
   const type = getValueType(val);
   const effectiveStatus = isIgnored ? 'ignored_diff' : status;
-  const blockId = `block_${++rowCounter}`;
+  const blockId = `block_${side}_${path || '$'}`;
 
   if (type !== 'object' && type !== 'array') {
     const valStr = formatPrimitiveValue(val, quoteStyle, format, ignoreQuoteStyle);

@@ -6,7 +6,7 @@
 
 ## Context
 1. Configuration files (especially Kubernetes labels/annotations and TOML keys) frequently contain dots and slashes inside key names (e.g., `app.kubernetes.io/managed-by`). Naive dot-splitting (`path.split('.')`) breaks in-place patching.
-2. Users requested the ability to edit values directly inline inside the diff viewer without switching to a separate raw text editor modal, plus a Beyond Compare-style bottom line inspector that highlights exact character-level differences within a modified line.
+2. Users requested the ability to edit values directly inline inside the diff viewer without switching to a separate raw text editor modal, plus a bottom Split Line Inspector that highlights exact character-level differences within a modified line.
 
 ## Decision
 1. **Bracket-Escaped JSONPath (`buildChildPath` & `parsePathTokens`)**:

@@ -5,7 +5,7 @@
 - **Iteration:** 2
 
 ## Context
-In a Beyond Compare 2-pane layout separated by a central action gutter (`▸` / `◂` buttons per row), any vertical misalignment between the Left pane, Central Gutter, and Right pane causes merge arrows to point to the wrong lines or disappear off-screen. On mobile phones in landscape orientation (e.g., `667x375` or `740x360`), standard desktop headers consume too much vertical space and `md:` (`768px`) breakpoints hide the split view.
+In a 2-pane split diff layout separated by a central action gutter (`▸` / `◂` buttons per row), any vertical misalignment between the Left pane, Central Gutter, and Right pane causes merge arrows to point to the wrong lines or disappear off-screen. On mobile phones in landscape orientation (e.g., `667x375` or `740x360`), standard desktop headers consume too much vertical space and `md:` (`768px`) breakpoints hide the split view.
 
 ## Decision
 1. **Strict 24px Row Height Invariance**:

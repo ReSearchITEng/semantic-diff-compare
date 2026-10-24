@@ -293,7 +293,145 @@ export function parseInlineValue(rawInput: string): any {
     return trimmed.slice(1, -1);
   }
 
+  // Partially typed double-quoted string while live typing (e.g. `"payment-ap`)
+  if (trimmed.startsWith('"') && !trimmed.endsWith('"') && trimmed.length > 1) {
+    return trimmed.slice(1);
+  }
+  if (trimmed.startsWith("'") && !trimmed.endsWith("'") && trimmed.length > 1) {
+    return trimmed.slice(1);
+  }
+
   return rawInput;
+}
+
+export interface ParsedLiveLine {
+  key?: string;
+  value?: any;
+  isValueComplete: boolean;
+  isKeyRenamed: boolean;
+}
+
+/**
+ * Parses a full line edited inside the Live Editor pane into its key and value components.
+ */
+export function parseEditedLine(
+  lineText: string,
+  originalKey?: string,
+  isBlockHeader?: boolean
+): ParsedLiveLine {
+  const trimmed = lineText.trim().replace(/,\s*$/, '');
+
+  // Block header line (e.g. `"server": {`, `server:`, `[server]`)
+  if (isBlockHeader) {
+    const cleanedKey = trimmed
+      .replace(/^\[|\]$/g, '')
+      .replace(/:\s*[{[]?$/, '')
+      .replace(/=\s*[{[]?$/, '')
+      .trim()
+      .replace(/^['"]|['"]$/g, '');
+    return {
+      key: cleanedKey || originalKey,
+      isValueComplete: false,
+      isKeyRenamed: Boolean(cleanedKey && originalKey && cleanedKey !== originalKey),
+    };
+  }
+
+  // Array item row where originalKey is `[0]`, `[1]`, etc.
+  if (originalKey && /^\[\d+\]$/.test(originalKey)) {
+    const itemValStr = trimmed.replace(/^-\s*/, '').trim();
+    const isValueComplete =
+      itemValStr.length > 0 && itemValStr !== '-' && itemValStr !== '"' && itemValStr !== "'";
+    return {
+      key: originalKey,
+      value: isValueComplete ? parseInlineValue(itemValStr) : undefined,
+      isValueComplete,
+      isKeyRenamed: false,
+    };
+  }
+
+  // Key-value line (`"key": val`, `key: val`, or `key = val`)
+  const eqIdx = trimmed.indexOf(' = ');
+  const colonIdx = trimmed.indexOf(':');
+
+  let rawKeyPart = '';
+  let rawValPart = '';
+
+  if (eqIdx > 0 && (colonIdx === -1 || eqIdx < colonIdx)) {
+    rawKeyPart = trimmed.slice(0, eqIdx).trim();
+    rawValPart = trimmed.slice(eqIdx + 3).trim();
+  } else if (colonIdx > 0) {
+    rawKeyPart = trimmed.slice(0, colonIdx).trim();
+    rawValPart = trimmed.slice(colonIdx + 1).trim();
+  } else {
+    // Fallback if user deleted the separator: treat entire trimmed text as value for originalKey
+    const isValueComplete =
+      trimmed.length > 0 && trimmed !== '-' && trimmed !== '"' && trimmed !== "'";
+    return {
+      key: originalKey,
+      value: isValueComplete ? parseInlineValue(trimmed) : undefined,
+      isValueComplete,
+      isKeyRenamed: false,
+    };
+  }
+
+  const parsedKey = rawKeyPart.replace(/^['"]|['"]$/g, '');
+  const isValueComplete =
+    rawValPart.length > 0 && rawValPart !== '-' && rawValPart !== '"' && rawValPart !== "'";
+
+  return {
+    key: parsedKey || originalKey,
+    value: isValueComplete ? parseInlineValue(rawValPart) : undefined,
+    isValueComplete,
+    isKeyRenamed: Boolean(parsedKey && originalKey && parsedKey !== originalKey),
+  };
+}
+
+/**
+ * Renames a key at `path` inside `obj` while preserving object key order, optionally updating its value.
+ */
+export function renameKeyAtPath(
+  obj: any,
+  path: string,
+  oldKey: string,
+  newKey: string,
+  newValue?: any
+): { data: any; newPath: string } {
+  const cloned = JSON.parse(JSON.stringify(obj ?? {}));
+  if (!oldKey || !newKey || oldKey === newKey) {
+    const updated = newValue !== undefined ? setValueAtPath(cloned, path, newValue) : cloned;
+    return { data: updated, newPath: path };
+  }
+
+  const tokens = parsePathTokens(path);
+  if (tokens.length === 0) return { data: cloned, newPath: path };
+
+  const parentTokens = tokens.slice(0, -1);
+  let parentPath = '$';
+  for (const t of parentTokens) {
+    parentPath = typeof t === 'number' ? `${parentPath}[${t}]` : buildChildPath(parentPath, t);
+  }
+
+  const parentObj = getValueAtPath(cloned, parentPath);
+  if (!parentObj || typeof parentObj !== 'object' || Array.isArray(parentObj)) {
+    return { data: cloned, newPath: path };
+  }
+
+  const reorderedParent: Record<string, any> = {};
+  const existingVal = parentObj[oldKey];
+  const valToSet = newValue !== undefined ? newValue : existingVal;
+
+  for (const k of Object.keys(parentObj)) {
+    if (k === oldKey) {
+      reorderedParent[newKey] = valToSet;
+    } else {
+      reorderedParent[k] = parentObj[k];
+    }
+  }
+
+  const updatedRoot =
+    parentPath === '$' ? reorderedParent : setValueAtPath(cloned, parentPath, reorderedParent);
+  const newPath = buildChildPath(parentPath, newKey);
+  return { data: updatedRoot, newPath };
 }
 
 export interface IntraLineDiff {
@@ -305,7 +443,7 @@ export interface IntraLineDiff {
 
 /**
  * Computes prefix/middle/suffix character-level diff between two lines for the
- * Beyond Compare-style bottom line comparison panel.
+ * bottom split line comparison panel.
  */
 export function computeIntraLineDiff(leftText: string, rightText: string): IntraLineDiff {
   if (leftText === rightText) {
@@ -333,4 +471,5 @@ export function computeIntraLineDiff(leftText: string, rightText: string): Intra
     suffix: suffixLen > 0 ? leftText.slice(leftText.length - suffixLen) : '',
   };
 }
+
 

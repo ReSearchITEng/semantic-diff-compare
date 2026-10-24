@@ -27,15 +27,17 @@ This document provides the complete architectural specification, data contracts,
 │   ├── semanticDiff.ts          # Option A tree alignment, multiset list matching, folding & CRD filtering
 │   ├── inPlacePatcher.ts        # Bracket-aware JSONPath getter/setter, selective tree merge & inline parser
 │   ├── formatter.ts             # Format conversion (JSON/JSONC/YAML/TOML), prettify & pure JSON export
+│   ├── diffReport.ts            # Structured Diff Report generator (Markdown, JSON, Plain Text)
 │   ├── presets.ts               # Built-in interactive demo scenarios
 │   └── diffEngine.test.ts       # Automated unit test suite (run via tsx --test)
 └── components/                  # React UI layer
-    ├── Header.tsx               # Top toolbar (presets, toggles, format menu, inline edit & bottom bar toggles)
+    ├── Header.tsx               # Top toolbar (presets, Undo/Redo, toggles, format menu, Export Report)
     ├── DiffPane.tsx             # Left/Right split pane with format switcher, folding & inline value editor
     ├── DiffGutter.tsx           # Central action gutter with ▸/◂ merge buttons & F7/F8 diff navigation
-    ├── BottomLineInspector.tsx  # Optional Beyond Compare stacked 2-line comparison bar with char diffing
+    ├── BottomLineInspector.tsx  # Optional Split Line Inspector bar with intra-line character diffing
     ├── StatusBar.tsx            # Live JSONPath breadcrumb, diff counters & bottom bar quick toggle
     ├── MergeAllModal.tsx        # Selective Merge All modal (skip vs. include ignorable CRD fields)
+    ├── DiffReportModal.tsx      # Diff Report preview, copy & download modal (.md / .json / .txt)
     ├── IgnoredFieldsModal.tsx   # K8s CRD ignored fields filter editor
     ├── RawEditorModal.tsx       # Side-by-side raw text editor modal
     └── DocsModal.tsx            # In-app ADR & Developer Documentation reader

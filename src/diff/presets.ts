@@ -19,7 +19,7 @@ export const PRESETS: PresetDemo[] = [
     name: 'Kubernetes CRD & Deployment',
     description: 'Demonstrates K8s metadata (managedFields, resourceVersion) muted diffs alongside real container spec changes.',
     ignoredFields: ['managedFields', 'resourceVersion', 'creationTimestamp', 'uid', 'generation'],
-    ignoreListOrder: false,
+    ignoreListOrder: true,
     leftText: `apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -121,7 +121,7 @@ spec:
     name: 'JSONC Config & Key Reordering',
     description: 'Comments (// and /* */) are non-breaking, and Right keys auto-align to Left order (Option A).',
     ignoredFields: ['description'],
-    ignoreListOrder: false,
+    ignoreListOrder: true,
     leftText: `{
   // Application identity configuration
   "name": "core-analytics",
@@ -193,7 +193,7 @@ rateLimits:
     name: 'Truncated & Broken JSON (Auto-Repair)',
     description: 'Demonstrates auto-repairing truncated payloads, unclosed quotes, brackets, and dangling commas with exact breakpoint badge.',
     ignoredFields: [],
-    ignoreListOrder: false,
+    ignoreListOrder: true,
     leftText: `{
   "status": "healthy",
   "timestamp": 1729580000,
@@ -220,7 +220,7 @@ rateLimits:
     name: 'YAML Tab Linter & Fixer',
     description: 'Flags illegal tab indentation in YAML with bright red markers, with one-click conversion to 2 spaces.',
     ignoredFields: [],
-    ignoreListOrder: false,
+    ignoreListOrder: true,
     leftText: `database:
   engine: postgresql
   version: 16
@@ -241,7 +241,7 @@ rateLimits:
     name: 'TOML Config (Cargo / Service TOML)',
     description: 'Compares TOML files with [section] tables, comments, and single vs double quotes.',
     ignoredFields: ['description'],
-    ignoreListOrder: false,
+    ignoreListOrder: true,
     leftText: `# Rust workspace package manifest
 [package]
 name = "semantic-diff-engine"

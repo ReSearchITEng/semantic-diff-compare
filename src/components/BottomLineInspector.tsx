@@ -93,14 +93,14 @@ export const BottomLineInspector: React.FC<BottomLineInspectorProps> = ({
 
   return (
     <section
-      aria-label="Beyond Compare Line Comparison Inspector"
+      aria-label="Split Line Inspector"
       className="shrink-0 border-t border-[var(--border-color,#27272a)] bg-[var(--bg-header,#18181b)] text-xs select-text font-mono"
     >
       {/* Inspector Header Bar */}
       <div className="h-6 px-3 border-b border-zinc-800/80 bg-zinc-900/80 flex items-center justify-between text-[11px] text-zinc-400 select-none">
         <div className="flex items-center gap-2 overflow-hidden">
           <Columns className="h-3 w-3 text-cyan-400 shrink-0" />
-          <span className="font-semibold text-zinc-200">Line Details (Beyond Compare View)</span>
+          <span className="font-semibold text-zinc-200">Split Line Inspector</span>
           {row?.path && (
             <span className="px-1.5 py-0.2 rounded bg-zinc-800 text-cyan-300 border border-zinc-700/70 truncate max-w-xs sm:max-w-md">
               {row.path}
@@ -210,16 +210,16 @@ export const BottomLineInspector: React.FC<BottomLineInspectorProps> = ({
                   <button
                     type="button"
                     onClick={() => startEdit('left')}
-                    className="px-1 py-0.2 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-cyan-300 text-[10px] flex items-center gap-0.5 cursor-pointer"
+                    data-badge-label="Edit"
+                    className="px-1 py-0.2 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-cyan-300 text-[10px] flex items-center gap-0.5 cursor-pointer select-none after:content-[attr(data-badge-label)]"
                     title="Edit Left value inline"
                   >
                     <Pencil className="h-2.5 w-2.5" />
-                    <span>Edit</span>
                   </button>
                 )}
               </div>
             ) : (
-              <span className="text-zinc-600 italic">&lt;no corresponding line on Left&gt;</span>
+              <span className="text-zinc-600 italic select-none">&lt;no corresponding line on Left&gt;</span>
             )}
           </div>
         </div>
@@ -250,7 +250,7 @@ export const BottomLineInspector: React.FC<BottomLineInspectorProps> = ({
                 <button
                   type="button"
                   onClick={() => commitEdit('right')}
-                  className="p-0.5 rounded bg-emerald-700 text-white hover:bg-emerald-600 cursor-pointer"
+                  className="p-0.5 rounded bg-emerald-700 text-white hover:bg-emerald-600 cursor-pointer select-none"
                   title="Save inline edit"
                 >
                   <Check className="h-3 w-3" />
@@ -258,7 +258,7 @@ export const BottomLineInspector: React.FC<BottomLineInspectorProps> = ({
                 <button
                   type="button"
                   onClick={() => setEditingSide(null)}
-                  className="p-0.5 rounded bg-zinc-700 text-zinc-300 hover:bg-zinc-600 cursor-pointer"
+                  className="p-0.5 rounded bg-zinc-700 text-zinc-300 hover:bg-zinc-600 cursor-pointer select-none"
                   title="Cancel"
                 >
                   <X className="h-3 w-3" />
@@ -279,16 +279,16 @@ export const BottomLineInspector: React.FC<BottomLineInspectorProps> = ({
                   <button
                     type="button"
                     onClick={() => startEdit('right')}
-                    className="px-1 py-0.2 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-cyan-300 text-[10px] flex items-center gap-0.5 cursor-pointer"
+                    data-badge-label="Edit"
+                    className="px-1 py-0.2 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-cyan-300 text-[10px] flex items-center gap-0.5 cursor-pointer select-none after:content-[attr(data-badge-label)]"
                     title="Edit Right value inline"
                   >
                     <Pencil className="h-2.5 w-2.5" />
-                    <span>Edit</span>
                   </button>
                 )}
               </div>
             ) : (
-              <span className="text-zinc-600 italic">&lt;no corresponding line on Right&gt;</span>
+              <span className="text-zinc-600 italic select-none">&lt;no corresponding line on Right&gt;</span>
             )}
           </div>
         </div>

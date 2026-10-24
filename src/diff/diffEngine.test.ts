@@ -15,9 +15,12 @@ import {
   serializePreservingFormat,
   parseInlineValue,
   computeIntraLineDiff,
+  parseEditedLine,
+  renameKeyAtPath,
 } from './inPlacePatcher';
-import { detectFormat, parseDocument } from './parser';
+import { detectFormat, parseDocument, validatePastedDocument } from './parser';
 import { convertDocumentToFormat } from './formatter';
+import { generateDiffReport } from './diffReport';
 
 test('JSONC: comments stripping preserves structure and extracts comments', () => {
   const jsonc = `{\n  // single line comment\n  "key": "value", /* inline comment */\n  "num": 42\n}`;
@@ -234,7 +237,7 @@ test('Cross-format YAML vs JSON: compares semantically without orphan closing-br
   assert.ok(asToml.includes('[database]'));
 });
 
-test('Inline value parser and Beyond Compare intra-line character diffing', () => {
+test('Inline value parser and split intra-line character diffing', () => {
   assert.equal(parseInlineValue('true'), true);
   assert.equal(parseInlineValue('false'), false);
   assert.equal(parseInlineValue('null'), null);
@@ -248,5 +251,186 @@ test('Inline value parser and Beyond Compare intra-line character diffing', () =
   assert.equal(diff.leftMid, '4.2');
   assert.equal(diff.rightMid, '5.0');
   assert.equal(diff.suffix, '"');
+});
+
+test('Two-side format conversion: changing format on Left then Right realigns cleanly without shifting data', () => {
+  // Start with reordered JSONC objects where Left first key is "name" and Right first key is "settings"
+  const leftJsonc = `{\n  // Left header\n  "name": "core-analytics",\n  "version": "3.1.0",\n  "settings": {\n    "theme": "dark",\n    "cacheTtlSeconds": 3600\n  }\n}`;
+  const rightJsonc = `{\n  // Right header\n  "settings": {\n    "cacheTtlSeconds": 7200,\n    "theme": "dark"\n  },\n  "version": "3.2.0",\n  "name": "core-analytics",\n  "extra": true\n}`;
+
+  const baseL = parseDocument(leftJsonc);
+  const baseR = parseDocument(rightJsonc);
+  const baseDiff = computeSemanticDiff(baseL, baseR, { ignoreListOrder: false, ignoredFields: [] });
+  assert.equal(baseDiff.stats.modified, 2); // version & cacheTtlSeconds
+  assert.equal(baseDiff.stats.addedRight, 1); // extra
+  assert.equal(baseDiff.stats.deletedRight, 0);
+
+  // Convert Left and Right through every format pair (yaml, json, jsonc, toml)
+  for (const fmtL of ['yaml', 'json', 'jsonc', 'toml'] as const) {
+    for (const fmtR of ['yaml', 'json', 'jsonc', 'toml'] as const) {
+      const convL = parseDocument(convertDocumentToFormat(baseL, fmtL));
+      const convR = parseDocument(convertDocumentToFormat(baseR, fmtR));
+      assert.equal(convL.format, fmtL);
+      assert.equal(convR.format, fmtR);
+
+      const pairDiff = computeSemanticDiff(convL, convR, {
+        ignoreListOrder: false,
+        ignoredFields: [],
+      });
+      assert.equal(pairDiff.stats.modified, 2, `modified mismatch for ${fmtL} vs ${fmtR}`);
+      assert.equal(pairDiff.stats.addedRight, 1, `addedRight mismatch for ${fmtL} vs ${fmtR}`);
+      assert.equal(pairDiff.stats.deletedRight, 0, `deletedRight mismatch for ${fmtL} vs ${fmtR}`);
+    }
+  }
+});
+
+test('Diff Report Exporter: generates Markdown, JSON, and Plain Text reports', () => {
+  const leftDoc = parseDocument(`service: billing\nreplicas: 2\nresourceVersion: "10"\n`);
+  const rightDoc = parseDocument(`service: billing\nreplicas: 4\nregion: eu-west\nresourceVersion: "11"\n`);
+  const ignoredFields = ['resourceVersion'];
+  const { rows, stats } = computeSemanticDiff(leftDoc, rightDoc, {
+    ignoreListOrder: false,
+    ignoredFields,
+  });
+
+  const mdReport = generateDiffReport({
+    leftDoc,
+    rightDoc,
+    rows,
+    stats,
+    format: 'markdown',
+    includeIgnored: false,
+    ignoredFields,
+  });
+  assert.ok(mdReport.includes('# SemantiCompare — Semantic Diff Report'));
+  assert.ok(mdReport.includes('$.replicas'));
+  assert.ok(mdReport.includes('$.region'));
+  assert.equal(mdReport.includes('| **Ignored (CRD)** | `$.resourceVersion`'), false);
+
+  const jsonReport = JSON.parse(
+    generateDiffReport({
+      leftDoc,
+      rightDoc,
+      rows,
+      stats,
+      format: 'json',
+      includeIgnored: true,
+      ignoredFields,
+    })
+  );
+  assert.equal(jsonReport.summary.modified, 1);
+  assert.equal(jsonReport.summary.addedRight, 1);
+  assert.equal(jsonReport.summary.ignoredDiff, 1);
+  assert.equal(jsonReport.differences.length, 3);
+});
+
+test('Unordered array alignment (ignoreListOrder: true): aligns modified objects by identity key or structural similarity without false delete/add splits', () => {
+  const leftYaml = `
+containers:
+  - name: payment-api
+    image: "pay:v2.4.0"
+    env:
+      - name: ENVIRONMENT
+        value: "production"
+      - name: DB_POOL_SIZE
+        value: "20"
+  - name: redis-cache
+    image: "redis:7.2"
+`;
+  // Right reorders containers AND reorders env vars while modifying DB_POOL_SIZE and payment-api image
+  const rightYaml = `
+containers:
+  - name: redis-cache
+    image: "redis:7.2"
+  - name: payment-api
+    image: "pay:v2.5.1"
+    env:
+      - name: DB_POOL_SIZE
+        value: "35"
+      - name: ENVIRONMENT
+        value: "production"
+      - name: FEATURE_INSTANT_PAYOUTS
+        value: "enabled"
+`;
+
+  const leftDoc = parseDocument(leftYaml);
+  const rightDoc = parseDocument(rightYaml);
+
+  const { rows, stats } = computeSemanticDiff(leftDoc, rightDoc, {
+    ignoreListOrder: true,
+    ignoredFields: [],
+  });
+
+  // Zero items were deleted! Only 2 leaf values were modified (image and DB_POOL_SIZE.value) and 1 env item (3 rows: header + name + value) was added
+  assert.equal(stats.deletedRight, 0, 'Should not mark modified objects in unordered arrays as deleted');
+  assert.equal(stats.modified, 2, 'Only payment-api image and DB_POOL_SIZE value should be marked modified');
+
+  // Verify that DB_POOL_SIZE value row has accurate left.path (env[1].value) and right.path (env[0].value)
+  const poolSizeRow = rows.find(
+    (r) => r.left?.key === 'value' && r.left?.value === '20' && r.right?.value === '35'
+  );
+  assert.ok(poolSizeRow, 'DB_POOL_SIZE value row should be aligned side-by-side');
+  assert.equal(poolSizeRow.left?.path, '$.containers[0].env[1].value');
+  assert.equal(poolSizeRow.right?.path, '$.containers[1].env[0].value');
+});
+
+test('Paste Validation (validatePastedDocument): accepts valid JSON/JSONC/YAML/TOML and rejects invalid syntax', () => {
+  // Valid formats
+  assert.equal(validatePastedDocument('{"service": "auth", "port": 8080}').valid, true);
+  assert.equal(
+    validatePastedDocument('{\n  // JSONC comment\n  "service": "auth",\n}').valid,
+    true
+  );
+  assert.equal(validatePastedDocument('service: auth\nport: 8080\n').valid, true);
+  assert.equal(validatePastedDocument('[package]\nname = "demo"\n').valid, true);
+
+  // Invalid / malformed formats
+  const badJsonUnclosed = validatePastedDocument('{"service": "auth", "port": 8080');
+  assert.equal(badJsonUnclosed.valid, false);
+  assert.ok(badJsonUnclosed.error?.includes('Invalid JSON'));
+
+  const badJsonSyntax = validatePastedDocument('{"service": "auth", "port": }');
+  assert.equal(badJsonSyntax.valid, false);
+  assert.ok(badJsonSyntax.error?.includes('Invalid JSON'));
+
+  const badYamlSyntax = validatePastedDocument('service: auth\n  badIndent: [unclosed');
+  assert.equal(badYamlSyntax.valid, false);
+  assert.ok(badYamlSyntax.error?.includes('Invalid YAML'));
+
+  const plainSentence = validatePastedDocument('just some plain unstructured sentence');
+  assert.equal(plainSentence.valid, false);
+  assert.ok(plainSentence.error?.includes('Invalid JSON/YAML'));
+});
+
+test('Live Editor line parsing & key renaming (parseEditedLine & renameKeyAtPath)', () => {
+  const editedVal = parseEditedLine('  "replicas": 5', 'replicas', false);
+  assert.equal(editedVal.key, 'replicas');
+  assert.equal(editedVal.value, 5);
+  assert.equal(editedVal.isValueComplete, true);
+  assert.equal(editedVal.isKeyRenamed, false);
+
+  const renamedKey = parseEditedLine('  "maxReplicas": 10', 'replicas', false);
+  assert.equal(renamedKey.key, 'maxReplicas');
+  assert.equal(renamedKey.value, 10);
+  assert.equal(renamedKey.isValueComplete, true);
+  assert.equal(renamedKey.isKeyRenamed, true);
+
+  const originalTree = {
+    service: 'api',
+    spec: {
+      replicas: 3,
+      strategy: 'RollingUpdate',
+    },
+  };
+  const { data: updatedTree, newPath } = renameKeyAtPath(
+    originalTree,
+    '$.spec.replicas',
+    'replicas',
+    'maxReplicas',
+    10
+  );
+  assert.equal(newPath, '$.spec.maxReplicas');
+  assert.deepEqual(Object.keys(updatedTree.spec), ['maxReplicas', 'strategy']);
+  assert.equal(updatedTree.spec.maxReplicas, 10);
 });
 
