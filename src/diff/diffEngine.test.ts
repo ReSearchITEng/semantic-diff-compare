@@ -17,6 +17,8 @@ import {
   computeIntraLineDiff,
   parseEditedLine,
   renameKeyAtPath,
+  patchRawTextScalar,
+  patchRawTextCommentLine,
 } from './inPlacePatcher';
 import { detectFormat, parseDocument, validatePastedDocument } from './parser';
 import { convertDocumentToFormat } from './formatter';
@@ -433,4 +435,108 @@ test('Live Editor line parsing & key renaming (parseEditedLine & renameKeyAtPath
   assert.deepEqual(Object.keys(updatedTree.spec), ['maxReplicas', 'strategy']);
   assert.equal(updatedTree.spec.maxReplicas, 10);
 });
+
+test('TOML Comments: Preserves standalone & inline comments from Helmsman example.toml in diff viewer', () => {
+  const tomlSample = [
+    '# version: v3.0.0',
+    '# context defines the context of this Desired State File.',
+    '# It is used to allow Helmsman identify which releases are managed by which DSF.',
+    '# Therefore, it is important that each DSF uses a unique context.',
+    'context= "test-infra"   # defaults to "default" if not provided',
+    '',
+    '# metadata -- add as many key/value pairs as you want',
+    '[metadata]',
+    '  org = "example.com/${ORG_PATH}/"',
+    '  maintainer = "k8s-admin (me@example.com)"',
+    '',
+    '[certificates]',
+    '#  caClient = "gs://mybucket/client.crt"',
+    '#  caCrt = "s3://mybucket/ca.crt" # S3 bucket path',
+    '',
+    '# define your environments and their k8s settings',
+    '[settings]',
+    '  kubeContext = "minikube"',
+  ].join('\n');
+
+  const doc = parseDocument(tomlSample);
+  assert.equal(doc.format, 'toml');
+  assert.equal(doc.parseError, null);
+  assert.ok(doc.commentNodes && doc.commentNodes.length >= 7);
+
+  const { rows, stats } = computeSemanticDiff(doc, doc, {
+    ignoreListOrder: false,
+    ignoredFields: [],
+  });
+
+  const commentRows = rows.filter((r) => r.left?.valueType === 'comment');
+  assert.ok(commentRows.length >= 7, `Expected >= 7 comment rows, got ${commentRows.length}`);
+
+  // First 4 rows must be the root header comments
+  assert.equal(rows[0].left?.valueType, 'comment');
+  assert.equal(rows[0].left?.formattedText, '# version: v3.0.0');
+  assert.equal(rows[1].left?.valueType, 'comment');
+  assert.equal(rows[2].left?.valueType, 'comment');
+  assert.equal(rows[3].left?.valueType, 'comment');
+
+  // Row 5 is context with preserved inline comment
+  assert.equal(rows[4].left?.key, 'context');
+  assert.ok(rows[4].left?.formattedText.includes('defaults to "default" if not provided'));
+  assert.equal(rows[4].left?.comment, 'defaults to "default" if not provided');
+
+  // Row 6 is comment before metadata
+  assert.equal(rows[5].left?.valueType, 'comment');
+  assert.equal(rows[5].left?.formattedText, '# metadata -- add as many key/value pairs as you want');
+
+  // Row 7 is section [metadata]
+  assert.equal(rows[6].left?.formattedText, '[metadata]');
+
+  assert.equal(stats.modified, 0);
+  assert.equal(stats.addedRight, 0);
+  assert.equal(stats.deletedRight, 0);
+});
+
+test('Comment differences: highlights comment_diff when comments differ but values match', () => {
+  const left = '# version: 1.0\ncontext = "prod"\n';
+  const right = '# version: 2.0\ncontext = "prod"\n';
+
+  const docL = parseDocument(left);
+  const docR = parseDocument(right);
+
+  const { rows, stats } = computeSemanticDiff(docL, docR, {
+    ignoreListOrder: false,
+    ignoredFields: [],
+  });
+
+  assert.equal(rows[0].status, 'comment_diff');
+  assert.equal(rows[0].left?.formattedText, '# version: 1.0');
+  assert.equal(rows[0].right?.formattedText, '# version: 2.0');
+  assert.equal(rows[1].status, 'unchanged');
+  assert.equal(stats.commentDiff, 1);
+  assert.equal(stats.modified, 0);
+});
+
+test('In-place patching: updates scalar values in rawText while retaining all comments intact', () => {
+  const rawToml = [
+    '# version: v3.0.0',
+    '# Context configuration',
+    'context = "test-infra"  # defaults to "default"',
+    '',
+    '# metadata section',
+    '[metadata]',
+    '  org = "example.com"',
+  ].join('\n');
+
+  const patched = patchRawTextScalar(rawToml, 'context', '$.context', 'prod-infra', 'toml');
+  assert.ok(patched !== null);
+  assert.ok(patched.includes('# version: v3.0.0'));
+  assert.ok(patched.includes('# Context configuration'));
+  assert.ok(patched.includes('context = "prod-infra"  # defaults to "default"'));
+  assert.ok(patched.includes('# metadata section'));
+  assert.ok(patched.includes('org = "example.com"'));
+
+  // Comment line patch
+  const patchedComment = patchRawTextCommentLine(rawToml, 1, '# version: v3.1.0');
+  assert.ok(patchedComment.startsWith('# version: v3.1.0\n'));
+});
+
 

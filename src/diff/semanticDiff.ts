@@ -6,6 +6,7 @@
 import {
   AlignedCell,
   AlignedDiffRow,
+  CommentNode,
   DiffOptions,
   DiffStatistics,
   DiffStatus,
@@ -397,6 +398,97 @@ function alignUnorderedArrayItems(
   return pairs;
 }
 
+export interface CommentContext {
+  leftComments: CommentNode[];
+  rightComments: CommentNode[];
+  leftInline: Record<string, string>;
+  rightInline: Record<string, string>;
+}
+
+/**
+ * Aligns standalone comment lines side-by-side or as single-sided rows.
+ */
+function alignCommentNodes(
+  leftNodes: CommentNode[],
+  rightNodes: CommentNode[],
+  parentPath: string,
+  depth: number,
+  ancestorBlockIds: string[] = []
+): AlignedDiffRow[] {
+  const commentRows: AlignedDiffRow[] = [];
+  const maxLen = Math.max(leftNodes.length, rightNodes.length);
+
+  for (let i = 0; i < maxLen; i++) {
+    const l = leftNodes[i];
+    const r = rightNodes[i];
+
+    if (l && r) {
+      const areEqual = l.cleanText === r.cleanText;
+      const status: DiffStatus = areEqual ? 'unchanged' : 'comment_diff';
+      commentRows.push({
+        id: `row_${++rowCounter}`,
+        path: `${parentPath}[#comment_${l.id}]`,
+        depth,
+        status,
+        left: {
+          path: `${parentPath}[#comment_${l.id}]`,
+          formattedText: l.text,
+          valueType: 'comment',
+          indent: l.indent > 0 ? l.indent : depth * 2,
+        },
+        right: {
+          path: `${parentPath}[#comment_${r.id}]`,
+          formattedText: r.text,
+          valueType: 'comment',
+          indent: r.indent > 0 ? r.indent : depth * 2,
+        },
+        canMergeLeftToRight: !areEqual,
+        canMergeRightToLeft: !areEqual,
+        diffSummary: !areEqual
+          ? `Left comment: "${l.cleanText}" vs Right comment: "${r.cleanText}"`
+          : undefined,
+        ancestorBlockIds,
+      });
+    } else if (l) {
+      commentRows.push({
+        id: `row_${++rowCounter}`,
+        path: `${parentPath}[#comment_${l.id}]`,
+        depth,
+        status: 'deleted_right',
+        left: {
+          path: `${parentPath}[#comment_${l.id}]`,
+          formattedText: l.text,
+          valueType: 'comment',
+          indent: l.indent > 0 ? l.indent : depth * 2,
+        },
+        canMergeLeftToRight: true,
+        canMergeRightToLeft: true,
+        diffSummary: `Comment present only in Left: "${l.cleanText}"`,
+        ancestorBlockIds,
+      });
+    } else if (r) {
+      commentRows.push({
+        id: `row_${++rowCounter}`,
+        path: `${parentPath}[#comment_${r.id}]`,
+        depth,
+        status: 'added_right',
+        right: {
+          path: `${parentPath}[#comment_${r.id}]`,
+          formattedText: r.text,
+          valueType: 'comment',
+          indent: r.indent > 0 ? r.indent : depth * 2,
+        },
+        canMergeLeftToRight: true,
+        canMergeRightToLeft: true,
+        diffSummary: `Comment present only in Right: "${r.cleanText}"`,
+        ancestorBlockIds,
+      });
+    }
+  }
+
+  return commentRows;
+}
+
 /**
  * Recursively aligns Left and Right data trees using Option A:
  * Rearranges Right pane keys to match Left pane order, pushing unique Right keys to the bottom.
@@ -413,7 +505,8 @@ function alignNodes(
   leftQuote: 'single' | 'double',
   rightQuote: 'single' | 'double',
   ancestorBlockIds: string[] = [],
-  rightPath: string = path
+  rightPath: string = path,
+  commentCtx?: CommentContext
 ): AlignedDiffRow[] {
   const rows: AlignedDiffRow[] = [];
   const currentBlockId = `block_${path || '$'}`;
@@ -436,7 +529,8 @@ function alignNodes(
       leftFormat,
       leftQuote,
       ignoreQuoteStyle,
-      ancestorBlockIds
+      ancestorBlockIds,
+      commentCtx
     );
   }
 
@@ -453,7 +547,8 @@ function alignNodes(
       rightFormat,
       rightQuote,
       ignoreQuoteStyle,
-      ancestorBlockIds
+      ancestorBlockIds,
+      commentCtx
     );
   }
 
@@ -474,7 +569,8 @@ function alignNodes(
       leftFormat,
       leftQuote,
       ignoreQuoteStyle,
-      ancestorBlockIds
+      ancestorBlockIds,
+      commentCtx
     );
     if (leftRows.length > 0) {
       const rightValStr = formatPrimitiveValue(rightVal, rightQuote, rightFormat, ignoreQuoteStyle);
@@ -506,7 +602,8 @@ function alignNodes(
       rightFormat,
       rightQuote,
       ignoreQuoteStyle,
-      ancestorBlockIds
+      ancestorBlockIds,
+      commentCtx
     );
     if (rightRows.length > 0) {
       const leftValStr = formatPrimitiveValue(leftVal, leftQuote, leftFormat, ignoreQuoteStyle);
@@ -538,22 +635,45 @@ function alignNodes(
     const leftValStr = formatPrimitiveValue(leftVal, leftQuote, leftFormat, ignoreQuoteStyle);
     const rightValStr = formatPrimitiveValue(rightVal, rightQuote, rightFormat, ignoreQuoteStyle);
 
+    let leftFormatted = formatKeyValueLine(key, leftValStr, leftFormat, leftQuote, ignoreQuoteStyle);
+    let rightFormatted = formatKeyValueLine(key, rightValStr, rightFormat, rightQuote, ignoreQuoteStyle);
+
+    const leftInline = commentCtx
+      ? commentCtx.leftInline[path] || (key ? commentCtx.leftInline[key] : undefined)
+      : undefined;
+    const rightInline = commentCtx
+      ? commentCtx.rightInline[rightPath] || (key ? commentCtx.rightInline[key] : undefined)
+      : undefined;
+
+    if (leftInline && !leftFormatted.includes('#')) {
+      leftFormatted += `  # ${leftInline}`;
+    }
+    if (rightInline && !rightFormatted.includes('#')) {
+      rightFormatted += `  # ${rightInline}`;
+    }
+
+    if (areEqual && leftInline !== rightInline && (leftInline || rightInline)) {
+      status = 'comment_diff';
+    }
+
     const leftCell: AlignedCell = {
       key,
       path,
-      formattedText: formatKeyValueLine(key, leftValStr, leftFormat, leftQuote, ignoreQuoteStyle),
+      formattedText: leftFormatted,
       value: leftVal,
       valueType: leftType,
       indent: depth * 2,
+      comment: leftInline,
     };
 
     const rightCell: AlignedCell = {
       key,
       path: rightPath,
-      formattedText: formatKeyValueLine(key, rightValStr, rightFormat, rightQuote, ignoreQuoteStyle),
+      formattedText: rightFormatted,
       value: rightVal,
       valueType: rightType,
       indent: depth * 2,
+      comment: rightInline,
     };
 
     rows.push({
@@ -565,7 +685,12 @@ function alignNodes(
       right: rightCell,
       canMergeLeftToRight: status !== 'unchanged',
       canMergeRightToLeft: status !== 'unchanged',
-      diffSummary: status !== 'unchanged' ? `Left: ${JSON.stringify(leftVal)} vs Right: ${JSON.stringify(rightVal)}` : undefined,
+      diffSummary:
+        status !== 'unchanged'
+          ? status === 'comment_diff'
+            ? `Comment diff: "${leftInline || ''}" vs "${rightInline || ''}"`
+            : `Left: ${JSON.stringify(leftVal)} vs Right: ${JSON.stringify(rightVal)}`
+          : undefined,
       ancestorBlockIds,
     });
     return rows;
@@ -644,8 +769,29 @@ function alignNodes(
       });
     }
 
-    // Recurse child keys
+    const childDepth = emitHeader ? depth + 1 : depth;
+
+    // Recurse child keys with comment interleaving
     for (const childKey of alignedKeys) {
+      if (commentCtx) {
+        const lComments = commentCtx.leftComments.filter(
+          (c) => c.sectionPath === path && c.beforeKey === childKey
+        );
+        const rComments = commentCtx.rightComments.filter(
+          (c) => c.sectionPath === rightPath && c.beforeKey === childKey
+        );
+        if (lComments.length > 0 || rComments.length > 0) {
+          const cRows = alignCommentNodes(
+            lComments,
+            rComments,
+            path,
+            childDepth,
+            childAncestors
+          );
+          rows.push(...cRows);
+        }
+      }
+
       const childLeftPath = buildChildPath(path, childKey);
       const childRightPath = buildChildPath(rightPath, childKey);
       const childRows = alignNodes(
@@ -653,16 +799,37 @@ function alignNodes(
         rightVal[childKey],
         childKey,
         childLeftPath,
-        emitHeader ? depth + 1 : depth,
+        childDepth,
         options,
         leftFormat,
         rightFormat,
         leftQuote,
         rightQuote,
         childAncestors,
-        childRightPath
+        childRightPath,
+        commentCtx
       );
       rows.push(...childRows);
+    }
+
+    // Trailing comments in this section
+    if (commentCtx) {
+      const lTrailing = commentCtx.leftComments.filter(
+        (c) => c.sectionPath === path && (c.isTrailing || !c.beforeKey)
+      );
+      const rTrailing = commentCtx.rightComments.filter(
+        (c) => c.sectionPath === rightPath && (c.isTrailing || !c.beforeKey)
+      );
+      if (lTrailing.length > 0 || rTrailing.length > 0) {
+        const cRows = alignCommentNodes(
+          lTrailing,
+          rTrailing,
+          path,
+          childDepth,
+          childAncestors
+        );
+        rows.push(...cRows);
+      }
     }
 
     // Footer row for JSON closing brace '}' only when both documents use braces
@@ -790,7 +957,8 @@ function alignNodes(
         leftQuote,
         rightQuote,
         childAncestors,
-        rightItemPath
+        rightItemPath,
+        commentCtx
       );
       rows.push(...childRows);
     });
@@ -846,7 +1014,8 @@ function generateSingleSideRows(
   format: DocumentFormat,
   quoteStyle: 'single' | 'double',
   ignoreQuoteStyle = true,
-  ancestorBlockIds: string[] = []
+  ancestorBlockIds: string[] = [],
+  commentCtx?: CommentContext
 ): AlignedDiffRow[] {
   const rows: AlignedDiffRow[] = [];
   const type = getValueType(val);
@@ -855,7 +1024,18 @@ function generateSingleSideRows(
 
   if (type !== 'object' && type !== 'array') {
     const valStr = formatPrimitiveValue(val, quoteStyle, format, ignoreQuoteStyle);
-    const formatted = formatKeyValueLine(key, valStr, format, quoteStyle, ignoreQuoteStyle);
+    let formatted = formatKeyValueLine(key, valStr, format, quoteStyle, ignoreQuoteStyle);
+
+    const inlineComment = commentCtx
+      ? side === 'left'
+        ? commentCtx.leftInline[path] || (key ? commentCtx.leftInline[key] : undefined)
+        : commentCtx.rightInline[path] || (key ? commentCtx.rightInline[key] : undefined)
+      : undefined;
+
+    if (inlineComment && !formatted.includes('#')) {
+      formatted += `  # ${inlineComment}`;
+    }
+
     const cell: AlignedCell = {
       key,
       path,
@@ -863,6 +1043,7 @@ function generateSingleSideRows(
       value: val,
       valueType: type,
       indent: depth * 2,
+      comment: inlineComment,
     };
 
     rows.push({
@@ -904,6 +1085,7 @@ function generateSingleSideRows(
 
   const emitHeader = Boolean(key || !isBraceless);
   const childAncestors = emitHeader ? [...ancestorBlockIds, blockId] : ancestorBlockIds;
+  const childDepth = emitHeader ? depth + 1 : depth;
 
   if (emitHeader) {
     const cell: AlignedCell = {
@@ -934,21 +1116,54 @@ function generateSingleSideRows(
   if (isObj) {
     const keys = Object.keys(val);
     for (const childKey of keys) {
+      if (commentCtx) {
+        const comments = (side === 'left' ? commentCtx.leftComments : commentCtx.rightComments).filter(
+          (c) => c.sectionPath === path && c.beforeKey === childKey
+        );
+        if (comments.length > 0) {
+          const cRows = alignCommentNodes(
+            side === 'left' ? comments : [],
+            side === 'right' ? comments : [],
+            path,
+            childDepth,
+            childAncestors
+          );
+          rows.push(...cRows);
+        }
+      }
+
       const childPath = buildChildPath(path, childKey);
       const childRows = generateSingleSideRows(
         val[childKey],
         childKey,
         childPath,
-        emitHeader ? depth + 1 : depth,
+        childDepth,
         side,
         effectiveStatus,
         isIgnored,
         format,
         quoteStyle,
         ignoreQuoteStyle,
-        childAncestors
+        childAncestors,
+        commentCtx
       );
       rows.push(...childRows);
+    }
+
+    if (commentCtx) {
+      const trailing = (side === 'left' ? commentCtx.leftComments : commentCtx.rightComments).filter(
+        (c) => c.sectionPath === path && (c.isTrailing || !c.beforeKey)
+      );
+      if (trailing.length > 0) {
+        const cRows = alignCommentNodes(
+          side === 'left' ? trailing : [],
+          side === 'right' ? trailing : [],
+          path,
+          childDepth,
+          childAncestors
+        );
+        rows.push(...cRows);
+      }
     }
   } else {
     const arr = val as any[];
@@ -958,14 +1173,15 @@ function generateSingleSideRows(
         item,
         `[${idx}]`,
         childPath,
-        emitHeader ? depth + 1 : depth,
+        childDepth,
         side,
         effectiveStatus,
         isIgnored,
         format,
         quoteStyle,
         ignoreQuoteStyle,
-        childAncestors
+        childAncestors,
+        commentCtx
       );
       rows.push(...childRows);
     });
@@ -1012,6 +1228,13 @@ export function computeSemanticDiff(
 } {
   rowCounter = 0;
 
+  const commentCtx: CommentContext = {
+    leftComments: leftDoc.commentNodes || [],
+    rightComments: rightDoc.commentNodes || [],
+    leftInline: leftDoc.inlineComments || {},
+    rightInline: rightDoc.inlineComments || {},
+  };
+
   const rawRows = alignNodes(
     leftDoc.data,
     rightDoc.data,
@@ -1023,7 +1246,9 @@ export function computeSemanticDiff(
     rightDoc.format,
     leftDoc.quoteStyle,
     rightDoc.quoteStyle,
-    []
+    [],
+    '$',
+    commentCtx
   );
 
   let leftLine = 1;
@@ -1073,25 +1298,33 @@ export function computeSemanticDiff(
 
     // Only count leaf/header differences once (don't count closing footers)
     if (!row.left?.isBlockFooter && !row.right?.isBlockFooter) {
-      switch (row.status) {
-        case 'unchanged':
+      if (row.left?.valueType === 'comment' || row.right?.valueType === 'comment') {
+        if (row.status === 'unchanged') {
           stats.unchanged++;
-          break;
-        case 'modified':
-          stats.modified++;
-          break;
-        case 'added_right':
-          stats.addedRight++;
-          break;
-        case 'deleted_right':
-          stats.deletedRight++;
-          break;
-        case 'ignored_diff':
-          stats.ignoredDiff++;
-          break;
-        case 'comment_diff':
+        } else {
           stats.commentDiff++;
-          break;
+        }
+      } else {
+        switch (row.status) {
+          case 'unchanged':
+            stats.unchanged++;
+            break;
+          case 'modified':
+            stats.modified++;
+            break;
+          case 'added_right':
+            stats.addedRight++;
+            break;
+          case 'deleted_right':
+            stats.deletedRight++;
+            break;
+          case 'ignored_diff':
+            stats.ignoredDiff++;
+            break;
+          case 'comment_diff':
+            stats.commentDiff++;
+            break;
+        }
       }
     }
 

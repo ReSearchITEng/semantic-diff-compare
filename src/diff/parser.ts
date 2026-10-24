@@ -5,9 +5,122 @@
 
 import YAML from 'yaml';
 import { parse as parseToml } from 'smol-toml';
-import { DocumentFormat, ParsedDocument, YamlLintIssue } from './types';
+import { CommentNode, DocumentFormat, ParsedDocument, YamlLintIssue } from './types';
 import { extractAndStripComments, repairJsonc } from './jsoncRepair';
 import { convertTabsToSpaces, detectIndentation, detectQuoteStyle, lintYamlTabs } from './yamlLinter';
+
+/**
+ * Extracts structured comment nodes with their section and key contextual positioning,
+ * along with any inline comments.
+ */
+export function extractStructuredComments(
+  rawText: string,
+  format: DocumentFormat
+): {
+  commentNodes: CommentNode[];
+  inlineComments: Record<string, string>;
+} {
+  const lines = rawText.split('\n');
+  const commentNodes: CommentNode[] = [];
+  const inlineComments: Record<string, string> = {};
+  let currentSection = '$';
+  let pendingComments: CommentNode[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const trimmed = rawLine.trim();
+    if (!trimmed) continue;
+
+    // Check standalone comment line
+    if (trimmed.startsWith('#') || trimmed.startsWith('//') || trimmed.startsWith('/*')) {
+      const indent = rawLine.search(/\S|$/);
+      pendingComments.push({
+        id: `c_${i + 1}`,
+        text: rawLine,
+        cleanText: trimmed.replace(/^[#/]+|\*\/$/g, '').trim(),
+        line: i + 1,
+        indent: indent >= 0 ? indent : 0,
+        sectionPath: currentSection,
+      });
+      continue;
+    }
+
+    if (format === 'toml') {
+      const secMatch = trimmed.match(/^\[\[?([^\]]+)\]\]?/);
+      if (secMatch) {
+        const fullSec = secMatch[1].trim();
+        const parts = fullSec.split('.');
+        const parentPath = parts.length > 1 ? '$.' + parts.slice(0, -1).join('.') : '$';
+
+        const childKeyInParent = parts[parts.length - 1];
+        for (const c of pendingComments) {
+          c.sectionPath = parentPath;
+          c.beforeKey = childKeyInParent;
+          commentNodes.push(c);
+        }
+        pendingComments = [];
+        currentSection = '$.' + fullSec;
+        continue;
+      }
+
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx > 0) {
+        const key = trimmed.slice(0, eqIdx).trim().replace(/^['"]|['"]$/g, '');
+        for (const c of pendingComments) {
+          c.sectionPath = currentSection;
+          c.beforeKey = key;
+          commentNodes.push(c);
+        }
+        pendingComments = [];
+
+        const hashIdx = trimmed.indexOf('#', eqIdx);
+        if (hashIdx > 0) {
+          const inlineText = trimmed.slice(hashIdx + 1).trim();
+          inlineComments[`${currentSection}.${key}`] = inlineText;
+          inlineComments[key] = inlineText;
+        }
+      }
+    } else if (format === 'yaml') {
+      const colonIdx = trimmed.indexOf(':');
+      if (colonIdx > 0) {
+        const key = trimmed.slice(0, colonIdx).trim().replace(/^['"]|['"]$/g, '');
+        for (const c of pendingComments) {
+          c.sectionPath = currentSection;
+          c.beforeKey = key;
+          commentNodes.push(c);
+        }
+        pendingComments = [];
+
+        const hashIdx = trimmed.indexOf('#', colonIdx);
+        if (hashIdx > 0) {
+          const inlineText = trimmed.slice(hashIdx + 1).trim();
+          inlineComments[`${currentSection}.${key}`] = inlineText;
+          inlineComments[key] = inlineText;
+        }
+      }
+    } else {
+      // JSON / JSONC
+      const colonIdx = trimmed.indexOf(':');
+      if (colonIdx > 0) {
+        const keyMatch = trimmed.slice(0, colonIdx).match(/"([^"]+)"|'([^']+)'/);
+        const key = keyMatch ? (keyMatch[1] || keyMatch[2]) : trimmed.slice(0, colonIdx).trim();
+        for (const c of pendingComments) {
+          c.sectionPath = currentSection;
+          c.beforeKey = key;
+          commentNodes.push(c);
+        }
+        pendingComments = [];
+      }
+    }
+  }
+
+  for (const c of pendingComments) {
+    c.isTrailing = true;
+    commentNodes.push(c);
+  }
+
+  return { commentNodes, inlineComments };
+}
 
 /**
  * Detects whether the input string is likely JSON, JSONC, TOML, or YAML.
@@ -90,6 +203,7 @@ export function parseDocument(rawText: string, forcedFormat?: DocumentFormat): P
   const indentStyle = detectIndentation(rawText);
   const quoteStyle = detectQuoteStyle(rawText);
   const comments: Record<string, string> = {};
+  const { commentNodes, inlineComments } = extractStructuredComments(rawText, format);
 
   if (format === 'toml') {
     const lines = rawText.split('\n');
@@ -112,6 +226,8 @@ export function parseDocument(rawText: string, forcedFormat?: DocumentFormat): P
         indentStyle,
         quoteStyle,
         comments,
+        commentNodes,
+        inlineComments,
       };
     } catch (err: any) {
       return {
@@ -122,6 +238,8 @@ export function parseDocument(rawText: string, forcedFormat?: DocumentFormat): P
         indentStyle,
         quoteStyle,
         comments,
+        commentNodes,
+        inlineComments,
       };
     }
   }
@@ -154,6 +272,8 @@ export function parseDocument(rawText: string, forcedFormat?: DocumentFormat): P
         indentStyle,
         quoteStyle,
         comments,
+        commentNodes,
+        inlineComments,
       };
     } catch (err: any) {
       return {
@@ -165,6 +285,8 @@ export function parseDocument(rawText: string, forcedFormat?: DocumentFormat): P
         indentStyle,
         quoteStyle,
         comments,
+        commentNodes,
+        inlineComments,
       };
     }
   }
@@ -182,6 +304,8 @@ export function parseDocument(rawText: string, forcedFormat?: DocumentFormat): P
     indentStyle,
     quoteStyle,
     comments: repairResult.comments,
+    commentNodes,
+    inlineComments,
   };
 }
 

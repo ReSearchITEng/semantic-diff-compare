@@ -238,42 +238,49 @@ rateLimits:
   },
   {
     id: 'toml-config',
-    name: 'TOML Config (Cargo / Service TOML)',
-    description: 'Compares TOML files with [section] tables, comments, and single vs double quotes.',
-    ignoredFields: ['description'],
-    ignoreListOrder: true,
-    leftText: `# Rust workspace package manifest
-[package]
-name = "semantic-diff-engine"
-version = "1.4.0"
-edition = "2021"
-description = "Core AST comparison crate"
+    name: 'TOML (Helmsman & Service Config)',
+    description: 'Compares TOML files with # comments, inline annotations, and [section] tables side-by-side.',
+    ignoredFields: [],
+    ignoreListOrder: false,
+    leftText: `# version: v3.0.0
+# context defines the context of this Desired State File.
+# Therefore, it is important that each DSF uses a unique context.
+context = "test-infra"   # defaults to "default" if not provided
 
-[server]
-host = "0.0.0.0"
-port = 8080
-workers = 4
+# metadata -- add as many key/value pairs as you want
+[metadata]
+  org = "example.com/infra"
+  maintainer = "k8s-admin@example.com"
+  kind = "DSF"
 
-[dependencies]
-serde = "1.0.197"
-tokio = "1.37.0"
+# certificates for connecting to the cluster
+[certificates]
+  # caClient = "gs://mybucket/client.crt"
+  # caCrt = "s3://mybucket/ca.crt"
+
+[settings]
+  kubeContext = "minikube"
+  storageBackend = "secret"
 `,
-    rightText: `# Updated manifest with single quotes and reordered tables
-[dependencies]
-tokio = '1.38.0'
-serde = '1.0.197'
-tracing = '0.1.40'
+    rightText: `# version: v3.1.0
+# context defines the context of this Desired State File.
+# Therefore, it is important that each DSF uses a unique context.
+context = "prod-infra"   # defaults to "default" if not provided
 
-[package]
-edition = '2021'
-name = 'semantic-diff-engine'
-version = '1.5.0'
-description = 'Updated description ignored by filter'
+# metadata -- add as many key/value pairs as you want
+[metadata]
+  org = "example.com/infra"
+  maintainer = "sre-team@example.com"
+  kind = "DSF"
 
-[server]
-host = '0.0.0.0'
-port = 9090
-workers = 8
+# certificates for connecting to the cluster
+[certificates]
+  # caClient = "gs://mybucket/client.crt"
+  # caCrt = "s3://mybucket/ca.crt"
+
+[settings]
+  kubeContext = "gke-production-us"
+  storageBackend = "secret"
 `,
   },
 ];

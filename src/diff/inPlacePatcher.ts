@@ -5,7 +5,7 @@
 
 import YAML from 'yaml';
 import { stringify as stringifyToml } from 'smol-toml';
-import { ParsedDocument } from './types';
+import { DocumentFormat, ParsedDocument } from './types';
 import { isFieldIgnored, buildChildPath } from './semanticDiff';
 
 /**
@@ -470,6 +470,81 @@ export function computeIntraLineDiff(leftText: string, rightText: string): Intra
     rightMid: rightText.slice(prefixLen, rightText.length - suffixLen),
     suffix: suffixLen > 0 ? leftText.slice(leftText.length - suffixLen) : '',
   };
+}
+
+/**
+ * Safely replaces a scalar value in rawText in-place while keeping all comments, blank lines,
+ * and surrounding structural formatting completely intact.
+ */
+export function patchRawTextScalar(
+  rawText: string,
+  key: string,
+  path: string,
+  newValue: any,
+  format: DocumentFormat
+): string | null {
+  if (!key || newValue === undefined || typeof newValue === 'object') return null;
+  const lines = rawText.split('\n');
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (trimmed.startsWith('#') || trimmed.startsWith('//') || trimmed.startsWith('/*')) continue;
+
+    const eqIdx = line.indexOf('=');
+    const colonIdx = line.indexOf(':');
+    let k = '';
+    let sepIdx = -1;
+
+    if (format === 'toml' && eqIdx > 0) {
+      k = line.slice(0, eqIdx).trim().replace(/^['"]|['"]$/g, '');
+      sepIdx = eqIdx;
+    } else if (colonIdx > 0) {
+      k = line.slice(0, colonIdx).trim().replace(/^['"]|['"]$/g, '');
+      sepIdx = colonIdx;
+    }
+
+    if (k === key) {
+      const indentMatch = line.match(/^(\s*)/);
+      const indent = indentMatch ? indentMatch[1] : '';
+      const afterSep = line.slice(sepIdx + 1);
+      const hashIdx = afterSep.indexOf('#');
+      const inlineComment = hashIdx >= 0 ? afterSep.slice(hashIdx) : '';
+      const formattedVal =
+        typeof newValue === 'string'
+          ? format === 'yaml' &&
+            !newValue.includes(':') &&
+            !newValue.includes('\n') &&
+            !newValue.includes('#')
+            ? newValue
+            : JSON.stringify(newValue)
+          : String(newValue);
+
+      lines[i] = `${indent}${k}${format === 'toml' ? ' = ' : ': '}${formattedVal}${
+        inlineComment ? '  ' + inlineComment : ''
+      }`;
+      return lines.join('\n');
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Updates a comment line at specified 1-based line number in rawText.
+ */
+export function patchRawTextCommentLine(
+  rawText: string,
+  lineNumber: number,
+  newText: string
+): string {
+  const lines = rawText.split('\n');
+  const idx = lineNumber - 1;
+  if (idx >= 0 && idx < lines.length) {
+    lines[idx] = newText;
+    return lines.join('\n');
+  }
+  return rawText;
 }
 
 

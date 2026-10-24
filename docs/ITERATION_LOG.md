@@ -117,3 +117,25 @@ This file tracks every iteration of **SemantiCompare**, recording user requireme
   - Added `validatePastedDocument` in `src/diff/parser.ts` to verify that pasted clipboard text is valid JSON, JSONC, YAML, or TOML representing a structured object or array.
   - Updated `handlePasteIntoPane` in `src/App.tsx` to validate clipboard text before mutating `leftRaw` or `rightRaw`. When invalid content is pasted, state remains untouched and a temporary `role="alert"` notification banner (`data-testid="paste-error-notification"`) is displayed with the syntax error reason and auto-dismissed after 5 seconds.
 
+---
+
+## Iteration 7 — TOML Comment Preservation & Production Docker HTTP Deployment
+### User Feedback Addressed
+1. *"Create the dockerfile with the latest versions of the apps, and latest os. expose as http, there will be an nginx in front with certs for https."*
+2. *"In toml one can have comments as well, but when I pasted text from https://raw.githubusercontent.com/mkubaczyk/helmsman/refs/heads/master/examples/example.toml, it did not paste the lines with comments (#)"*
+
+### Root Causes & Fixes Learned
+- **Bug 1: TOML `#` Comments Disappeared in Diff Viewer**
+  - *Root Cause*: `smol-toml`'s parser converts TOML into a plain JavaScript object, discarding all comment tokens. `computeSemanticDiff` previously only iterated through keys in `doc.data`, resulting in 0 comment rows emitted for TOML or YAML files.
+  - *Fix*:
+    1. Built `extractStructuredComments(rawText, format)` in `src/diff/parser.ts` to scan line-by-line, tracking section hierarchy (`currentSection`) and attaching comments before section keys and child key-value pairs, plus capturing inline `#` comments on key-value lines.
+    2. Corrected dotted TOML section handling (e.g. `[apps.argo.set]`) so `parentPath` is `$.apps.argo` and `childKeyInParent` is `set`, ensuring comments before sub-tables and array of tables are accurately placed.
+    3. Updated `semanticDiff.ts`'s `alignNodes` and `generateSingleSideRows` to interleave comment rows (`valueType: 'comment'`) before child keys and at section trailing boundaries.
+    4. Configured syntax highlighting in `DiffPane.tsx` to style comments with `text-zinc-500 italic` (`status: 'unchanged'`) and `text-sky-300/90 italic` (`status: 'comment_diff'`).
+    5. Implemented `patchRawTextScalar` and `patchRawTextCommentLine` in `inPlacePatcher.ts` so live edits preserve surrounding comments and blank lines in `rawText`.
+- **Production Docker Deployment**:
+  - Implemented multi-stage `Dockerfile` (`node:22-alpine` builder + `nginx:1.27-alpine` runner).
+  - Configured `nginx.conf` listening on HTTP port 80 with SPA fallback routing (`try_files $uri $uri/ /index.html;`), gzip compression for text/json/yaml/toml/js/css, security headers (`X-Frame-Options: SAMEORIGIN`, `X-Content-Type-Options: nosniff`), 1-year immutable caching for static assets, and `/healthz` health check endpoint.
+  - Added `.dockerignore` to exclude `node_modules`, `dist`, `.git`, `.playwright-cli`, and `.env*`.
+
+

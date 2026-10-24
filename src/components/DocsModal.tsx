@@ -18,6 +18,7 @@ import adr006Md from '../../docs/adr/ADR-006-three-way-scroll-sync-mobile-landsc
 import adr007Md from '../../docs/adr/ADR-007-undo-redo-diff-report-and-format-realignment.md?raw';
 import adr008Md from '../../docs/adr/ADR-008-daily-clipboard-and-unordered-array-alignment.md?raw';
 import adr009Md from '../../docs/adr/ADR-009-always-editable-live-editor-and-paste-validation.md?raw';
+import adr010Md from '../../docs/adr/ADR-010-toml-comment-preservation-and-docker-deployment.md?raw';
 
 interface DocsModalProps {
   isOpen: boolean;
@@ -116,6 +117,13 @@ const DOC_ENTRIES: DocEntry[] = [
     path: '/docs/adr/ADR-009-always-editable-live-editor-and-paste-validation.md',
     category: 'Architecture Decision Records (ADRs)',
     content: adr009Md,
+  },
+  {
+    id: 'adr-010',
+    title: 'ADR-010: TOML Comments & Docker Deploy',
+    path: '/docs/adr/ADR-010-toml-comment-preservation-and-docker-deployment.md',
+    category: 'Architecture Decision Records (ADRs)',
+    content: adr010Md,
   },
 ];
 

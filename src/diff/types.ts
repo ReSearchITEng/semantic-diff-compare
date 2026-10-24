@@ -39,6 +39,17 @@ export interface YamlLintIssue {
   tabCount: number;
 }
 
+export interface CommentNode {
+  id: string;
+  text: string; // The complete comment line, e.g. "# version: v3.0.0"
+  cleanText: string; // Stripped comment text
+  line: number; // 1-indexed source line number
+  indent: number; // Leading spaces
+  sectionPath: string; // e.g. "$" or "$.metadata" or "$.certificates"
+  beforeKey?: string; // Key or section header this comment precedes
+  isTrailing?: boolean; // True if comment is at the end of section or document
+}
+
 export interface ParsedDocument {
   format: DocumentFormat;
   rawText: string;
@@ -52,6 +63,8 @@ export interface ParsedDocument {
   };
   quoteStyle: 'single' | 'double';
   comments: Record<string, string>; // path -> comment string
+  commentNodes?: CommentNode[];
+  inlineComments?: Record<string, string>; // path -> inline comment string
 }
 
 export interface AlignedCell {

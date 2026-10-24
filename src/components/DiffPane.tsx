@@ -723,19 +723,25 @@ export const DiffPane: React.FC<DiffPaneProps> = ({
                           isDirty: true,
                           hasPushedHistory: true,
                         });
-                        const parsed = parseEditedLine(newText, cell.key, cell.isBlockHeader);
-                        // Immediately write value edits to document state so diff & stats update live as you type
-                        if (!cell.isBlockHeader && !parsed.isKeyRenamed && parsed.isValueComplete) {
+                        if (cell.valueType === 'comment' || cell.path.includes('[#comment_')) {
                           if (onLiveEditLine) {
-                            onLiveEditLine(
-                              cell.path,
-                              cell.key,
-                              cell.key,
-                              parsed.value,
-                              shouldPushHistory
-                            );
-                          } else {
-                            onInlineEditValue(cell.path, parsed.value);
+                            onLiveEditLine(cell.path, '#comment', '#comment', newText, shouldPushHistory);
+                          }
+                        } else {
+                          const parsed = parseEditedLine(newText, cell.key, cell.isBlockHeader);
+                          // Immediately write value edits to document state so diff & stats update live as you type
+                          if (!cell.isBlockHeader && !parsed.isKeyRenamed && parsed.isValueComplete) {
+                            if (onLiveEditLine) {
+                              onLiveEditLine(
+                                cell.path,
+                                cell.key,
+                                cell.key,
+                                parsed.value,
+                                shouldPushHistory
+                              );
+                            } else {
+                              onInlineEditValue(cell.path, parsed.value);
+                            }
                           }
                         }
                       }}
@@ -745,30 +751,45 @@ export const DiffPane: React.FC<DiffPaneProps> = ({
                           focusedRowState.rowKey === stableRowKey &&
                           focusedRowState.isDirty
                         ) {
-                          const parsed = parseEditedLine(
-                            focusedRowState.draftText,
-                            focusedRowState.originalKey,
-                            focusedRowState.isBlockHeader
-                          );
-                          if (parsed.isKeyRenamed && parsed.key && onLiveEditLine) {
-                            onLiveEditLine(
-                              focusedRowState.path,
-                              focusedRowState.originalKey,
-                              parsed.key,
-                              parsed.isValueComplete ? parsed.value : undefined,
-                              !focusedRowState.hasPushedHistory
-                            );
-                          } else if (!focusedRowState.isBlockHeader && parsed.isValueComplete) {
+                          if (
+                            focusedRowState.path.includes('[#comment_') ||
+                            focusedRowState.originalKey === '#comment'
+                          ) {
                             if (onLiveEditLine) {
                               onLiveEditLine(
                                 focusedRowState.path,
-                                focusedRowState.originalKey,
-                                focusedRowState.originalKey,
-                                parsed.value,
+                                '#comment',
+                                '#comment',
+                                focusedRowState.draftText,
                                 !focusedRowState.hasPushedHistory
                               );
-                            } else {
-                              onInlineEditValue(focusedRowState.path, parsed.value);
+                            }
+                          } else {
+                            const parsed = parseEditedLine(
+                              focusedRowState.draftText,
+                              focusedRowState.originalKey,
+                              focusedRowState.isBlockHeader
+                            );
+                            if (parsed.isKeyRenamed && parsed.key && onLiveEditLine) {
+                              onLiveEditLine(
+                                focusedRowState.path,
+                                focusedRowState.originalKey,
+                                parsed.key,
+                                parsed.isValueComplete ? parsed.value : undefined,
+                                !focusedRowState.hasPushedHistory
+                              );
+                            } else if (!focusedRowState.isBlockHeader && parsed.isValueComplete) {
+                              if (onLiveEditLine) {
+                                onLiveEditLine(
+                                  focusedRowState.path,
+                                  focusedRowState.originalKey,
+                                  focusedRowState.originalKey,
+                                  parsed.value,
+                                  !focusedRowState.hasPushedHistory
+                                );
+                              } else {
+                                onInlineEditValue(focusedRowState.path, parsed.value);
+                              }
                             }
                           }
                         }
@@ -810,6 +831,19 @@ export const DiffPane: React.FC<DiffPaneProps> = ({
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           e.preventDefault();
+                          if (cell.valueType === 'comment' || cell.path.includes('[#comment_')) {
+                            if (onLiveEditLine) {
+                              onLiveEditLine(
+                                cell.path,
+                                '#comment',
+                                '#comment',
+                                activeLineText,
+                                !focusedRowState?.hasPushedHistory
+                              );
+                            }
+                            moveFocusToAdjacentRow(e.currentTarget, 1);
+                            return;
+                          }
                           const parsed = parseEditedLine(
                             activeLineText,
                             cell.key,
@@ -894,6 +928,17 @@ function renderSyntaxText(
   diffStatus: string,
   onClickValue?: () => void
 ): React.ReactNode {
+  // Check for standalone comment line or comment valueType
+  if (
+    valueType === 'comment' ||
+    formattedText.trim().startsWith('#') ||
+    formattedText.trim().startsWith('//')
+  ) {
+    const commentClass =
+      diffStatus === 'comment_diff' ? 'text-sky-300/90 italic' : 'text-zinc-500 italic';
+    return <span className={commentClass}>{formattedText}</span>;
+  }
+
   // Check for TOML section header e.g. [package]
   if (valueType === 'object' && /^\[.+\]$/.test(formattedText.trim())) {
     return <span className="text-amber-300 font-semibold">{formattedText}</span>;

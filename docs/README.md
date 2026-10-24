@@ -18,7 +18,10 @@ Welcome to the engineering documentation and rebuild repository for **SemantiCom
     ├── ADR-004-k8s-crd-ignored-fields-selective-merge.md         # K8s CRD ignorable fields & selective Merge All
     ├── ADR-005-inplace-patching-bracket-jsonpath.md              # Bracket JSONPath, inline editing & intra-line diffing
     ├── ADR-006-three-way-scroll-sync-mobile-landscape.md         # 3-way scroll sync & mobile landscape responsiveness
-    └── ADR-007-undo-redo-diff-report-and-format-realignment.md   # Multi-step Undo/Redo, Diff Reports & format realignment
+    ├── ADR-007-undo-redo-diff-report-and-format-realignment.md   # Multi-step Undo/Redo, Diff Reports & format realignment
+    ├── ADR-008-daily-clipboard-and-unordered-array-alignment.md  # Daily clipboard UX (Ctrl+A/C/V) & multi-pass list ordering
+    ├── ADR-009-always-editable-live-editor-and-paste-validation.md # Always-editable live editor & paste validation notification
+    └── ADR-010-toml-comment-preservation-and-docker-deployment.md  # TOML comment preservation & production Docker deployment
 ```
 
 ---

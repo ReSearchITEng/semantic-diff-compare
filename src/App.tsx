@@ -24,6 +24,8 @@ import {
   mergeDataTrees,
   serializePreservingFormat,
   renameKeyAtPath,
+  patchRawTextScalar,
+  patchRawTextCommentLine,
 } from './diff/inPlacePatcher';
 import {
   adoptFormat,
@@ -244,14 +246,18 @@ export default function App() {
   const handleInlineEditValue = (side: 'left' | 'right', path: string, newValue: any) => {
     if (!path) return;
     pushHistory(`Inline edit ${path} on ${side}`);
+    const targetDoc = side === 'left' ? leftDoc : rightDoc;
+    const key = path.split('.').pop() || '';
+    const patchedText = patchRawTextScalar(targetDoc.rawText, key, path, newValue, targetDoc.format);
+
     if (side === 'left') {
       const updatedData = setValueAtPath(leftDoc.data, path, newValue);
-      const updatedText = serializePreservingFormat(updatedData, leftDoc);
+      const updatedText = patchedText || serializePreservingFormat(updatedData, leftDoc);
       setLeftRaw(updatedText);
       setActiveLeftVal(newValue);
     } else {
       const updatedData = setValueAtPath(rightDoc.data, path, newValue);
-      const updatedText = serializePreservingFormat(updatedData, rightDoc);
+      const updatedText = patchedText || serializePreservingFormat(updatedData, rightDoc);
       setRightRaw(updatedText);
       setActiveRightVal(newValue);
     }
@@ -274,6 +280,22 @@ export default function App() {
     }
 
     const targetDoc = side === 'left' ? leftDoc : rightDoc;
+
+    // Check if editing a comment line directly
+    if (path.includes('[#comment_c_') || originalKey === '#comment') {
+      const lineMatch = path.match(/\[#comment_c_(\d+)\]/);
+      if (lineMatch) {
+        const lineNum = parseInt(lineMatch[1], 10);
+        const patchedRaw = patchRawTextCommentLine(targetDoc.rawText, lineNum, String(newValue ?? ''));
+        if (side === 'left') {
+          setLeftRaw(patchedRaw);
+        } else {
+          setRightRaw(patchedRaw);
+        }
+        return;
+      }
+    }
+
     let updatedData = targetDoc.data;
     let nextActivePath = path;
 
@@ -287,7 +309,13 @@ export default function App() {
       return;
     }
 
-    const updatedText = serializePreservingFormat(updatedData, targetDoc);
+    const effectiveKey = originalKey || path.split('.').pop() || '';
+    const patchedText =
+      originalKey && newValue !== undefined
+        ? patchRawTextScalar(targetDoc.rawText, effectiveKey, path, newValue, targetDoc.format)
+        : null;
+
+    const updatedText = patchedText || serializePreservingFormat(updatedData, targetDoc);
     if (side === 'left') {
       setLeftRaw(updatedText);
       if (newValue !== undefined) setActiveLeftVal(newValue);
