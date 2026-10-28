@@ -6,8 +6,6 @@ dist
 .env.*
 .aistudio
 .playwright-cli
-*.md
-docs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

@@ -1,19 +1,19 @@
 # ==============================================================================
 # Multi-stage production build for Unified Config Diff & Merge Editor
-# Stage 1: Build static assets using Node 22 on Alpine Linux
-# Stage 2: Serve high-performance HTTP on port 80 via Nginx 1.27 on Alpine Linux
+# Stage 1: Build static assets using Node Alpine Linux (latest)
+# Stage 2: Serve high-performance HTTP on port 80 via Nginx Alpine Linux (latest)
 #          (Upstream reverse proxy terminates TLS/HTTPS certificates)
 # ==============================================================================
 
 # -----------------------------
 # Stage 1: Builder
 # -----------------------------
-FROM node:22-alpine AS builder
+FROM node:alpine AS builder
 
 WORKDIR /app
 
 # Copy package manifests first to optimize Docker layer caching
-COPY package.json ./
+COPY package.json package-lock.json* ./
 
 # Install project dependencies
 RUN npm install
@@ -27,7 +27,7 @@ RUN npm run build
 # -----------------------------
 # Stage 2: Runtime Web Server
 # -----------------------------
-FROM nginx:1.27-alpine AS runner
+FROM nginx:alpine AS runner
 
 # Remove default boilerplate configuration
 RUN rm -f /etc/nginx/conf.d/default.conf

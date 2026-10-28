@@ -138,4 +138,27 @@ This file tracks every iteration of **SemantiCompare**, recording user requireme
   - Configured `nginx.conf` listening on HTTP port 80 with SPA fallback routing (`try_files $uri $uri/ /index.html;`), gzip compression for text/json/yaml/toml/js/css, security headers (`X-Frame-Options: SAMEORIGIN`, `X-Content-Type-Options: nosniff`), 1-year immutable caching for static assets, and `/healthz` health check endpoint.
   - Added `.dockerignore` to exclude `node_modules`, `dist`, `.git`, `.playwright-cli`, and `.env*`.
 
+---
+
+## Iteration 8 — Docker Build Repair & Latest Stable Upgrade
+### User Feedback Addressed
+1. *"docker build . , fix as needed, use latest versions"*
+2. *"where are the .md files you've just created with explanations ?"*
+
+### Root Causes & Fixes Applied
+- **Docker Build Failure (`UNRESOLVED_IMPORT`)**:
+  - *Root Cause*: `.dockerignore` contained `docs` and `*.md`. Because `src/components/DocsModal.tsx` imports markdown documentation at build time via Vite's `?raw` loader (`docs/README.md`, `docs/REBUILD_PLAYBOOK.md`, `docs/ITERATION_LOG.md`, and ADRs), the files were omitted from the Docker build context during `COPY . .`, causing `npm run build` to fail with unresolved imports.
+  - *Fix*: Removed `docs` and `*.md` from `.dockerignore`.
+- **Latest Base Images (`Dockerfile`)**:
+  - Upgraded builder stage to `node:alpine` (Node.js v26.12.1 Alpine).
+  - Upgraded runner stage to `nginx:alpine` (Nginx v1.31.8 Alpine).
+  - Updated manifest layer caching to `COPY package.json package-lock.json* ./`.
+- **Latest Stable Dependencies (`package.json`)**:
+  - Upgraded all runtime and developer dependencies to their latest stable releases (`react` & `react-dom` 19.3.1, `vite` 8.3.5, `@google/genai` 2.31.0, `express` 5.3.0, `lucide-react` 1.63.0, `motion` 14.7.1, `esbuild` 0.28.2, `tsx` 4.23.15, `@types/node` 26.6.5).
+- **Verification**:
+  - All 20 unit tests in `diffEngine.test.ts` pass with 0 errors.
+  - TypeScript type check (`tsc --noEmit`) passes with 0 errors.
+  - `docker build -t semantic-diff-compare:latest .` builds cleanly and container `/healthz` responds `200 OK`.
+
+
 
