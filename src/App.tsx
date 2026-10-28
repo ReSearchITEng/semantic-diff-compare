@@ -26,6 +26,7 @@ import {
   renameKeyAtPath,
   patchRawTextScalar,
   patchRawTextCommentLine,
+  patchRawTextKeyRename,
 } from './diff/inPlacePatcher';
 import {
   adoptFormat,
@@ -36,6 +37,13 @@ import {
   normalizeTabsToSpaces,
 } from './diff/formatter';
 import { AlignedDiffRow, DocumentFormat, ThemeType } from './diff/types';
+import {
+  isShortcutUndo,
+  isShortcutRedo,
+  isShortcutSelectAll,
+  isShortcutCopy,
+  isShortcutPaste,
+} from './diff/keyboardShortcuts';
 
 interface HistorySnapshot {
   leftRaw: string;
@@ -64,6 +72,7 @@ export default function App() {
   // Undo / Redo History Stacks
   const [undoStack, setUndoStack] = useState<HistorySnapshot[]>([]);
   const [redoStack, setRedoStack] = useState<HistorySnapshot[]>([]);
+  const [undoRedoVersion, setUndoRedoVersion] = useState<number>(0);
 
   const pushHistory = useCallback(
     (label: string) => {
@@ -103,6 +112,7 @@ export default function App() {
     setLeftFormatOverride(previous.leftFormatOverride);
     setRightFormatOverride(previous.rightFormatOverride);
     setCurrentPresetId(previous.currentPresetId);
+    setUndoRedoVersion((v) => v + 1);
   }, [undoStack, leftRaw, rightRaw, leftFormatOverride, rightFormatOverride, currentPresetId]);
 
   const handleRedo = useCallback(() => {
@@ -125,6 +135,7 @@ export default function App() {
     setLeftFormatOverride(next.leftFormatOverride);
     setRightFormatOverride(next.rightFormatOverride);
     setCurrentPresetId(next.currentPresetId);
+    setUndoRedoVersion((v) => v + 1);
   }, [redoStack, leftRaw, rightRaw, leftFormatOverride, rightFormatOverride, currentPresetId]);
 
   // Modals & Active Path
@@ -299,8 +310,10 @@ export default function App() {
     let updatedData = targetDoc.data;
     let nextActivePath = path;
 
-    if (originalKey && newKey && originalKey !== newKey) {
-      const renamed = renameKeyAtPath(targetDoc.data, path, originalKey, newKey, newValue);
+    const isKeyRenamed = Boolean(originalKey && newKey && originalKey !== newKey);
+
+    if (isKeyRenamed) {
+      const renamed = renameKeyAtPath(targetDoc.data, path, originalKey!, newKey!, newValue);
       updatedData = renamed.data;
       nextActivePath = renamed.newPath;
     } else if (newValue !== undefined) {
@@ -309,11 +322,20 @@ export default function App() {
       return;
     }
 
-    const effectiveKey = originalKey || path.split('.').pop() || '';
-    const patchedText =
-      originalKey && newValue !== undefined
-        ? patchRawTextScalar(targetDoc.rawText, effectiveKey, path, newValue, targetDoc.format)
-        : null;
+    let patchedText: string | null = null;
+    if (isKeyRenamed && originalKey && newKey) {
+      patchedText = patchRawTextKeyRename(
+        targetDoc.rawText,
+        originalKey,
+        newKey,
+        path,
+        newValue,
+        targetDoc.format
+      );
+    } else if (originalKey && newValue !== undefined) {
+      const effectiveKey = originalKey || path.split('.').pop() || '';
+      patchedText = patchRawTextScalar(targetDoc.rawText, effectiveKey, path, newValue, targetDoc.format);
+    }
 
     const updatedText = patchedText || serializePreservingFormat(updatedData, targetDoc);
     if (side === 'left') {
@@ -666,18 +688,13 @@ export default function App() {
 
       if (isExternalInput || isAnyModalOpen) return;
 
-      const keyLower = e.key.toLowerCase();
-      if ((e.ctrlKey || e.metaKey) && keyLower === 'z') {
+      if (isShortcutUndo(e)) {
         e.preventDefault();
-        if (e.shiftKey) {
-          handleRedo();
-        } else {
-          handleUndo();
-        }
-      } else if ((e.ctrlKey || e.metaKey) && keyLower === 'y') {
+        handleUndo();
+      } else if (isShortcutRedo(e)) {
         e.preventDefault();
         handleRedo();
-      } else if ((e.ctrlKey || e.metaKey) && keyLower === 'a') {
+      } else if (isShortcutSelectAll(e)) {
         // Scoped Select-All: select only the active diff pane's code lines
         const currentSide = focusedSideRef.current;
         const paneEl = currentSide === 'left' ? leftScrollRef.current : rightScrollRef.current;
@@ -696,8 +713,8 @@ export default function App() {
             sel.addRange(range);
           }
         }
-      } else if ((e.ctrlKey || e.metaKey) && keyLower === 'c') {
-        // Ensure programmatic Ctrl+C also writes clean formatted selection to clipboard
+      } else if (isShortcutCopy(e)) {
+        // Ensure programmatic Ctrl+C / ⌘C also writes clean formatted selection to clipboard
         const currentSide = focusedSideRef.current;
         const leftSelected = extractCleanPaneSelection(leftScrollRef.current, leftDoc.rawText);
         const rightSelected = extractCleanPaneSelection(rightScrollRef.current, rightDoc.rawText);
@@ -705,7 +722,7 @@ export default function App() {
           (currentSide === 'left' ? leftSelected ?? rightSelected : rightSelected ?? leftSelected) ??
           (currentSide === 'left' ? leftDoc.rawText : rightDoc.rawText);
         navigator.clipboard?.writeText?.(cleanToCopy).catch(() => {});
-      } else if ((e.ctrlKey || e.metaKey) && keyLower === 'v') {
+      } else if (isShortcutPaste(e)) {
         // Allow native `paste` event to fire first; if synthetic keydown in headless browser doesn't trigger `paste`, fallback to navigator.clipboard.readText()
         const triggerTime = Date.now();
         const targetSide = focusedSideRef.current;
@@ -910,6 +927,10 @@ export default function App() {
             onLiveEditLine={(path, origKey, newKey, val, pushHist) =>
               handleLiveEditLine('left', path, origKey, newKey, val, pushHist)
             }
+            onPushHistory={pushHistory}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            undoRedoVersion={undoRedoVersion}
             isFocusedPane={focusedSide === 'left'}
             onFocusPane={() => activatePane('left')}
             onPasteText={(text) => handlePasteIntoPane('left', text)}
@@ -956,6 +977,10 @@ export default function App() {
             onLiveEditLine={(path, origKey, newKey, val, pushHist) =>
               handleLiveEditLine('right', path, origKey, newKey, val, pushHist)
             }
+            onPushHistory={pushHistory}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            undoRedoVersion={undoRedoVersion}
             isFocusedPane={focusedSide === 'right'}
             onFocusPane={() => activatePane('right')}
             onPasteText={(text) => handlePasteIntoPane('right', text)}

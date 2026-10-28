@@ -539,4 +539,132 @@ test('In-place patching: updates scalar values in rawText while retaining all co
   assert.ok(patchedComment.startsWith('# version: v3.1.0\n'));
 });
 
+test('Keyboard Shortcuts & Caret Navigation: macOS and Windows/Linux shortcut recognition and word jumping', async () => {
+  const {
+    calculateWordJump,
+    isShortcutUndo,
+    isShortcutRedo,
+    isShortcutSelectAll,
+    isShortcutCopy,
+    isShortcutPaste,
+    isShortcutWordJump,
+    isShortcutLineJump,
+    isShortcutFileJump,
+  } = await import('./keyboardShortcuts');
+
+  // Test word-by-word caret jumping
+  const sampleLine = '  replicas: 3 # pod count';
+  // Jumps to the right
+  const pos0 = 0;
+  const pos1 = calculateWordJump(sampleLine, pos0, 1); // jumps past spaces to end of 'replicas' -> 10
+  assert.equal(pos1, 10);
+  const pos2 = calculateWordJump(sampleLine, pos1, 1); // jumps over ':' -> 11
+  assert.equal(pos2, 11);
+  const pos3 = calculateWordJump(sampleLine, pos2, 1); // jumps past space and over '3' -> 13
+  assert.equal(pos3, 13);
+  const pos4 = calculateWordJump(sampleLine, pos3, 1); // jumps past space and over '#' -> 15
+  assert.equal(pos4, 15);
+
+  // Jumps to the left
+  const posLeft1 = calculateWordJump(sampleLine, 15, -1); // from after '#' jumps left to start of '#' -> 14
+  assert.equal(posLeft1, 14);
+  const posLeft2 = calculateWordJump(sampleLine, posLeft1, -1); // from '#' jumps left to '3' -> 12
+  assert.equal(posLeft2, 12);
+  const posLeft3 = calculateWordJump(sampleLine, posLeft2, -1); // from '3' jumps left over ':' -> 10
+  assert.equal(posLeft3, 10);
+  const posLeft4 = calculateWordJump(sampleLine, posLeft3, -1); // from ':' jumps left to 'replicas' start -> 2
+  assert.equal(posLeft4, 2);
+  const posLeft5 = calculateWordJump(sampleLine, posLeft4, -1); // jumps left to beginning of line -> 0
+  assert.equal(posLeft5, 0);
+
+  // Test Windows/Linux vs macOS Undo detection
+  assert.equal(isShortcutUndo({ key: 'z', ctrlKey: true, metaKey: false }), true); // Win Ctrl+Z
+  assert.equal(isShortcutUndo({ key: 'z', ctrlKey: false, metaKey: true }), true); // Mac ⌘Z
+  assert.equal(isShortcutUndo({ key: 'Z', ctrlKey: false, metaKey: true }), true); // Mac ⌘Z capital
+  assert.equal(isShortcutUndo({ key: 'z', ctrlKey: false, metaKey: true, shiftKey: true }), false); // Not undo (is redo)
+
+  // Test Redo detection (Win: Ctrl+Y / Ctrl+Shift+Z, Mac: ⇧⌘Z / ⌘Y)
+  assert.equal(isShortcutRedo({ key: 'y', ctrlKey: true, metaKey: false }), true); // Win Ctrl+Y
+  assert.equal(isShortcutRedo({ key: 'z', ctrlKey: true, metaKey: false, shiftKey: true }), true); // Win Ctrl+Shift+Z
+  assert.equal(isShortcutRedo({ key: 'z', ctrlKey: false, metaKey: true, shiftKey: true }), true); // Mac ⇧⌘Z
+  assert.equal(isShortcutRedo({ key: 'y', ctrlKey: false, metaKey: true }), true); // Mac ⌘Y
+
+  // Test Select All (Ctrl+A & ⌘A)
+  assert.equal(isShortcutSelectAll({ key: 'a', ctrlKey: true, metaKey: false }), true);
+  assert.equal(isShortcutSelectAll({ key: 'a', ctrlKey: false, metaKey: true }), true);
+
+  // Test Copy (Ctrl+C & ⌘C) and Paste (Ctrl+V & ⌘V)
+  assert.equal(isShortcutCopy({ key: 'c', ctrlKey: true, metaKey: false }), true);
+  assert.equal(isShortcutCopy({ key: 'c', ctrlKey: false, metaKey: true }), true);
+  assert.equal(isShortcutPaste({ key: 'v', ctrlKey: true, metaKey: false }), true);
+  assert.equal(isShortcutPaste({ key: 'v', ctrlKey: false, metaKey: true }), true);
+
+  // Test Word Jump recognition (Ctrl+Arrow or Alt/Option+Arrow)
+  assert.deepEqual(isShortcutWordJump({ key: 'ArrowLeft', ctrlKey: true, metaKey: false }), { isJump: true, direction: -1 });
+  assert.deepEqual(isShortcutWordJump({ key: 'ArrowRight', ctrlKey: false, metaKey: false, altKey: true }), { isJump: true, direction: 1 });
+
+  // Test Mac Line Jump (⌘ArrowLeft / ⌘ArrowRight)
+  assert.deepEqual(isShortcutLineJump({ key: 'ArrowLeft', ctrlKey: false, metaKey: true }), { isJump: true, to: 'start' });
+  assert.deepEqual(isShortcutLineJump({ key: 'ArrowRight', ctrlKey: false, metaKey: true }), { isJump: true, to: 'end' });
+
+  // Test File Jump (⌘ArrowUp / ⌘ArrowDown / Ctrl+Home / Ctrl+End)
+  assert.deepEqual(isShortcutFileJump({ key: 'ArrowUp', ctrlKey: false, metaKey: true }), { isJump: true, to: 'top' });
+  assert.deepEqual(isShortcutFileJump({ key: 'ArrowDown', ctrlKey: false, metaKey: true }), { isJump: true, to: 'bottom' });
+});
+
+test('Live Editor Key Renaming: patchRawTextKeyRename and dynamic ignored-field re-evaluation', async () => {
+  const { patchRawTextKeyRename } = await import('./inPlacePatcher');
+
+  // 1. YAML key rename in-place while keeping comments and indentation
+  const yaml = [
+    '# server config',
+    'spec:',
+    '  replicas: 3 # default replicas',
+    '  tier: "frontend"',
+  ].join('\n');
+
+  const patchedYaml = patchRawTextKeyRename(yaml, 'replicas', 'podCount', '$.spec.replicas', 3, 'yaml');
+  assert.ok(patchedYaml !== null);
+  assert.ok(patchedYaml.includes('  podCount: 3  # default replicas'));
+  assert.ok(patchedYaml.includes('# server config'));
+  assert.ok(!patchedYaml.includes('replicas:'));
+
+  // 2. TOML section header rename in-place
+  const toml = [
+    '# Database configuration',
+    '[database]',
+    '  port = 5432',
+  ].join('\n');
+
+  const patchedToml = patchRawTextKeyRename(toml, 'database', 'postgresDb', '$.database', undefined, 'toml');
+  assert.ok(patchedToml !== null);
+  assert.ok(patchedToml.includes('[postgresDb]'));
+  assert.ok(patchedToml.includes('# Database configuration'));
+  assert.ok(!patchedToml.includes('[database]'));
+
+  // 3. Dynamic ignored field transition when key is renamed:
+  // If field is 'generation' (in ignoredFields: ['generation', 'resourceVersion']), it is ignored_diff
+  const leftDocBefore = parseDocument('metadata:\n  generation: 1\n  name: app');
+  const rightDocBefore = parseDocument('metadata:\n  generation: 2\n  name: app');
+  const diffBefore = computeSemanticDiff(leftDocBefore, rightDocBefore, {
+    ignoreListOrder: true,
+    ignoredFields: ['generation', 'resourceVersion'],
+  });
+  const genRowBefore = diffBefore.rows.find((r) => r.path.includes('generation'));
+  assert.ok(genRowBefore);
+  assert.equal(genRowBefore.status, 'ignored_diff');
+
+  // If user renames 'generation' to 'customGeneration', it is no longer ignored and becomes 'modified'
+  const leftDocAfter = parseDocument('metadata:\n  customGeneration: 1\n  name: app');
+  const rightDocAfter = parseDocument('metadata:\n  customGeneration: 2\n  name: app');
+  const diffAfter = computeSemanticDiff(leftDocAfter, rightDocAfter, {
+    ignoreListOrder: true,
+    ignoredFields: ['generation', 'resourceVersion'],
+  });
+  const customRowAfter = diffAfter.rows.find((r) => r.path.includes('customGeneration'));
+  assert.ok(customRowAfter);
+  assert.equal(customRowAfter.status, 'modified');
+});
+
+
 

@@ -175,7 +175,7 @@ export const Header: React.FC<HeaderProps> = ({
                 ? 'hover:bg-zinc-700 text-zinc-200 cursor-pointer'
                 : 'text-zinc-600 cursor-not-allowed opacity-60'
             }`}
-            title={canUndo ? `Undo: ${undoLabel || 'last change'} (Ctrl+Z)` : 'Nothing to undo'}
+            title={canUndo ? `Undo: ${undoLabel || 'last change'} (Ctrl+Z / ⌘Z)` : 'Nothing to undo'}
             aria-label="Undo"
           >
             <Undo2 className="h-3.5 w-3.5" />
@@ -191,7 +191,7 @@ export const Header: React.FC<HeaderProps> = ({
                 ? 'hover:bg-zinc-700 text-zinc-200 cursor-pointer'
                 : 'text-zinc-600 cursor-not-allowed opacity-60'
             }`}
-            title={canRedo ? `Redo: ${redoLabel || 'change'} (Ctrl+Y)` : 'Nothing to redo'}
+            title={canRedo ? `Redo: ${redoLabel || 'change'} (Ctrl+Y / ⇧⌘Z)` : 'Nothing to redo'}
             aria-label="Redo"
           >
             <Redo2 className="h-3.5 w-3.5" />

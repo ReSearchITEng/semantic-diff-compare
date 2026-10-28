@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { ChevronDown, ChevronUp, ArrowRight, ArrowLeft } from 'lucide-react';
+import { ChevronDown, ChevronUp, ArrowRight, ArrowLeft, FolderSync } from 'lucide-react';
 import { AlignedDiffRow } from '../diff/types';
 
 interface DiffGutterProps {
@@ -69,6 +69,14 @@ export const DiffGutter: React.FC<DiffGutterProps> = ({
             row.canMergeLeftToRight ||
             row.canMergeRightToLeft;
 
+          // Check if row represents an entire block/group (object or array)
+          const isGroup = Boolean(
+            row.left?.isBlockHeader ||
+            row.right?.isBlockHeader ||
+            (row.left && (row.left.valueType === 'object' || row.left.valueType === 'array')) ||
+            (row.right && (row.right.valueType === 'object' || row.right.valueType === 'array'))
+          );
+
           return (
             <div
               key={row.id || index}
@@ -78,7 +86,7 @@ export const DiffGutter: React.FC<DiffGutterProps> = ({
             >
               {isDiff && (row.canMergeLeftToRight || row.canMergeRightToLeft) ? (
                 <div className="flex items-center justify-center gap-0.5 px-0.5">
-                  {/* Left-to-Right Merge Button */}
+                  {/* Left-to-Right Merge Button (FolderSync for group, ArrowRight for line) */}
                   {row.canMergeLeftToRight && (
                     <button
                       type="button"
@@ -86,15 +94,23 @@ export const DiffGutter: React.FC<DiffGutterProps> = ({
                         e.stopPropagation();
                         onMergeRowLeftToRight(row);
                       }}
-                      className="w-5 h-5 rounded bg-cyan-950/90 hover:bg-cyan-600 active:bg-cyan-500 text-cyan-300 hover:text-white flex items-center justify-center transition border border-cyan-700/80 shadow-xs cursor-pointer touch-manipulation shrink-0"
+                      className={`w-5 h-5 rounded flex items-center justify-center transition shadow-xs cursor-pointer touch-manipulation shrink-0 ${
+                        isGroup
+                          ? 'bg-cyan-900/90 hover:bg-cyan-600 active:bg-cyan-500 text-cyan-200 hover:text-white border border-cyan-500/80 ring-1 ring-cyan-400/40'
+                          : 'bg-cyan-950/90 hover:bg-cyan-600 active:bg-cyan-500 text-cyan-300 hover:text-white border border-cyan-700/80'
+                      }`}
                       title={
-                        row.status === 'added_right'
+                        isGroup
+                          ? row.status === 'added_right'
+                            ? 'Sync group Left ▸ Right (Remove group from Right)'
+                            : 'Sync entire group Left ▸ Right (Merge group into Right)'
+                          : row.status === 'added_right'
                           ? 'Sync Left ▸ Right (Remove added field from Right)'
                           : 'Copy Left ▸ Right (Merge into Right)'
                       }
-                      aria-label="Merge Left to Right"
+                      aria-label={isGroup ? 'Sync group Left to Right' : 'Merge Left to Right'}
                     >
-                      <ArrowRight className="h-3 w-3" />
+                      {isGroup ? <FolderSync className="h-3 w-3" /> : <ArrowRight className="h-3 w-3" />}
                     </button>
                   )}
 
@@ -124,7 +140,7 @@ export const DiffGutter: React.FC<DiffGutterProps> = ({
                       : '•'}
                   </span>
 
-                  {/* Right-to-Left Merge Button */}
+                  {/* Right-to-Left Merge Button (FolderSync for group, ArrowLeft for line) */}
                   {row.canMergeRightToLeft && (
                     <button
                       type="button"
@@ -132,15 +148,23 @@ export const DiffGutter: React.FC<DiffGutterProps> = ({
                         e.stopPropagation();
                         onMergeRowRightToLeft(row);
                       }}
-                      className="w-5 h-5 rounded bg-emerald-950/90 hover:bg-emerald-600 active:bg-emerald-500 text-emerald-300 hover:text-white flex items-center justify-center transition border border-emerald-700/80 shadow-xs cursor-pointer touch-manipulation shrink-0"
+                      className={`w-5 h-5 rounded flex items-center justify-center transition shadow-xs cursor-pointer touch-manipulation shrink-0 ${
+                        isGroup
+                          ? 'bg-emerald-900/90 hover:bg-emerald-600 active:bg-emerald-500 text-emerald-200 hover:text-white border border-emerald-500/80 ring-1 ring-emerald-400/40'
+                          : 'bg-emerald-950/90 hover:bg-emerald-600 active:bg-emerald-500 text-emerald-300 hover:text-white border border-emerald-700/80'
+                      }`}
                       title={
-                        row.status === 'deleted_right'
+                        isGroup
+                          ? row.status === 'deleted_right'
+                            ? 'Sync group Right ◂ Left (Remove group from Left)'
+                            : 'Sync entire group Right ◂ Left (Merge group into Left)'
+                          : row.status === 'deleted_right'
                           ? 'Sync Right ◂ Left (Remove deleted field from Left)'
                           : 'Copy Right ◂ Left (Merge into Left)'
                       }
-                      aria-label="Merge Right to Left"
+                      aria-label={isGroup ? 'Sync group Right to Left' : 'Merge Right to Left'}
                     >
-                      <ArrowLeft className="h-3 w-3" />
+                      {isGroup ? <FolderSync className="h-3 w-3" /> : <ArrowLeft className="h-3 w-3" />}
                     </button>
                   )}
                 </div>

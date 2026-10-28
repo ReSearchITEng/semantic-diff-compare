@@ -547,4 +547,94 @@ export function patchRawTextCommentLine(
   return rawText;
 }
 
+/**
+ * Safely renames a key in rawText in-place while keeping all comments, blank lines,
+ * indentation, and surrounding formatting intact.
+ */
+export function patchRawTextKeyRename(
+  rawText: string,
+  oldKey: string,
+  newKey: string,
+  path: string,
+  newValue: any,
+  format: DocumentFormat
+): string | null {
+  if (!oldKey || !newKey || oldKey === newKey) return null;
+  const lines = rawText.split('\n');
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    if (trimmed.startsWith('#') || trimmed.startsWith('//') || trimmed.startsWith('/*')) continue;
+
+    // Check for TOML section header e.g. [oldKey] or [parent.oldKey]
+    if (format === 'toml' && trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      const headerContent = trimmed.slice(1, -1).trim();
+      if (headerContent === oldKey || headerContent.endsWith(`.${oldKey}`)) {
+        const newHeader =
+          headerContent === oldKey
+            ? newKey
+            : headerContent.slice(0, -oldKey.length) + newKey;
+        const indentMatch = line.match(/^(\s*)/);
+        const indent = indentMatch ? indentMatch[1] : '';
+        lines[i] = `${indent}[${newHeader}]`;
+        return lines.join('\n');
+      }
+    }
+
+    const eqIdx = line.indexOf('=');
+    const colonIdx = line.indexOf(':');
+    let k = '';
+    let sepIdx = -1;
+
+    if (format === 'toml' && eqIdx > 0 && (colonIdx === -1 || eqIdx < colonIdx)) {
+      k = line.slice(0, eqIdx).trim().replace(/^['"]|['"]$/g, '');
+      sepIdx = eqIdx;
+    } else if (colonIdx > 0) {
+      k = line.slice(0, colonIdx).trim().replace(/^['"]|['"]$/g, '');
+      sepIdx = colonIdx;
+    }
+
+    if (k === oldKey) {
+      const indentMatch = line.match(/^(\s*)/);
+      const indent = indentMatch ? indentMatch[1] : '';
+      const afterSep = line.slice(sepIdx + 1);
+      const hashIdx = afterSep.indexOf('#');
+      const inlineComment = hashIdx >= 0 ? afterSep.slice(hashIdx) : '';
+
+      // Format new key: quote if JSON or contains special chars
+      const formattedKey =
+        format === 'json' || format === 'jsonc' || /[.\-\s/]/.test(newKey)
+          ? JSON.stringify(newKey)
+          : newKey;
+
+      let formattedVal = '';
+      if (newValue !== undefined) {
+        formattedVal =
+          typeof newValue === 'string'
+            ? format === 'yaml' &&
+              !newValue.includes(':') &&
+              !newValue.includes('\n') &&
+              !newValue.includes('#')
+              ? newValue
+              : JSON.stringify(newValue)
+            : String(newValue);
+      } else {
+        // Retain whatever value or structural brace was on this line
+        const valWithoutComment = hashIdx >= 0 ? afterSep.slice(0, hashIdx) : afterSep;
+        formattedVal = valWithoutComment.trim();
+      }
+
+      if (format === 'toml') {
+        lines[i] = `${indent}${formattedKey} = ${formattedVal}${inlineComment ? '  ' + inlineComment : ''}`;
+      } else {
+        lines[i] = `${indent}${formattedKey}: ${formattedVal}${inlineComment ? '  ' + inlineComment : ''}`;
+      }
+      return lines.join('\n');
+    }
+  }
+
+  return null;
+}
+
 

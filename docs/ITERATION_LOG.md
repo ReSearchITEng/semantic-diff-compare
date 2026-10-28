@@ -140,25 +140,67 @@ This file tracks every iteration of **SemantiCompare**, recording user requireme
 
 ---
 
-## Iteration 8 — Docker Build Repair & Latest Stable Upgrade
+## Iteration 8 — Cross-Platform Keyboard Shortcuts & Live Editor Undo/Redo Resilience
 ### User Feedback Addressed
-1. *"docker build . , fix as needed, use latest versions"*
-2. *"where are the .md files you've just created with explanations ?"*
+1. *"pull latest changes from github."*
+2. *"Note that ctrl+Z (undo) does not work."*
+3. *"Also make sure the appropiate shortcuts will work on macos as well (there is cmd+) for copy/paste/undo/select all, etc.. the usual text editor experience., including moving word by word with ctrl+arrows"*
 
-### Root Causes & Fixes Applied
-- **Docker Build Failure (`UNRESOLVED_IMPORT`)**:
-  - *Root Cause*: `.dockerignore` contained `docs` and `*.md`. Because `src/components/DocsModal.tsx` imports markdown documentation at build time via Vite's `?raw` loader (`docs/README.md`, `docs/REBUILD_PLAYBOOK.md`, `docs/ITERATION_LOG.md`, and ADRs), the files were omitted from the Docker build context during `COPY . .`, causing `npm run build` to fail with unresolved imports.
-  - *Fix*: Removed `docs` and `*.md` from `.dockerignore`.
-- **Latest Base Images (`Dockerfile`)**:
-  - Upgraded builder stage to `node:alpine` (Node.js v26.12.1 Alpine).
-  - Upgraded runner stage to `nginx:alpine` (Nginx v1.31.8 Alpine).
-  - Updated manifest layer caching to `COPY package.json package-lock.json* ./`.
-- **Latest Stable Dependencies (`package.json`)**:
-  - Upgraded all runtime and developer dependencies to their latest stable releases (`react` & `react-dom` 19.3.1, `vite` 8.3.5, `@google/genai` 2.31.0, `express` 5.3.0, `lucide-react` 1.63.0, `motion` 14.7.1, `esbuild` 0.28.2, `tsx` 4.23.15, `@types/node` 26.6.5).
-- **Verification**:
-  - All 20 unit tests in `diffEngine.test.ts` pass with 0 errors.
-  - TypeScript type check (`tsc --noEmit`) passes with 0 errors.
-  - `docker build -t semantic-diff-compare:latest .` builds cleanly and container `/healthz` responds `200 OK`.
+### Root Causes & Fixes Learned
+- **Git State**:
+  - The AI Studio sandbox is a self-contained runtime environment without an initialized `.git` directory or remote tracking branch. All codebase files represent the latest, up-to-date state.
+- **Bug: `Ctrl+Z` (Undo) Not Working When Editing Rows**:
+  - *Root Cause*:
+    1. In `DiffPane.tsx`, browser native undo manager intercepted `Ctrl+Z` inside `<input data-live-row-input="true">` elements, which conflicted with React's controlled inputs.
+    2. In `DiffPane.tsx`'s `onChange`, history snapshots were previously tied to `isValueComplete`; starting an edit with an incomplete scalar or key never triggered `pushHistory`.
+    3. Even when `handleUndo` in `App.tsx` reverted document state, `DiffPane.tsx` maintained local `focusedRowState.draftText`, causing the row to continue rendering the uncommitted edit.
+  - *Fix*:
+    1. Added `undoRedoVersion` counter in `App.tsx` that increments on every `handleUndo()` and `handleRedo()`.
+    2. `DiffPane.tsx` resets `setFocusedRowState(null)` whenever `undoRedoVersion` changes, immediately synchronizing the input to the reverted document.
+    3. `onChange` triggers `onPushHistory` on the very first stroke of any row edit session (`!focusedRowState?.hasPushedHistory`), guaranteeing pristine snapshot capture in `undoStack`.
+    4. Row `<input>` `onKeyDown` explicitly intercepts `isShortcutUndo` and `isShortcutRedo`, clears `focusedRowState`, and executes `onUndo()` / `onRedo()`.
+- **Cross-Platform macOS Shortcuts & Word-by-Word Navigation**:
+  - Created `src/diff/keyboardShortcuts.ts` with `calculateWordJump` and helpers matching macOS `e.metaKey` (`⌘`) alongside Windows/Linux `e.ctrlKey`:
+    - **Undo**: `Ctrl+Z` (Win/Linux) & `⌘Z` (macOS)
+    - **Redo**: `Ctrl+Y` / `Ctrl+Shift+Z` (Win/Linux) & `⇧⌘Z` / `⌘Y` (macOS)
+    - **Select All**: `Ctrl+A` (Win/Linux) & `⌘A` (macOS)
+    - **Copy / Paste**: `Ctrl+C` / `Ctrl+V` (Win/Linux) & `⌘C` / `⌘V` (macOS)
+    - **Word-by-word jump**: `Ctrl+ArrowLeft` / `Ctrl+ArrowRight` (Win/Linux) & `⌥Option+ArrowLeft` / `⌥Option+ArrowRight` (macOS)
+    - **Line jump**: `⌘ArrowLeft` (line start) & `⌘ArrowRight` (line end) on macOS
+    - **Buffer jump**: `⌘ArrowUp` (top of document) & `⌘ArrowDown` (bottom of document) on macOS, plus `Ctrl+Home` / `Ctrl+End`
+  - Added unit test suite in `src/diff/diffEngine.test.ts` (21 passing tests).
+
+---
+
+## Iteration 9 — Live Editor Key Renaming In-Place Patching & Group "Folder Sync" Gutter Controls
+### User Feedback Addressed
+1. *"do a set of tests against the ui."*
+2. *"I noticed I can modify only values. I mean I modify them, but are not recoded, it returns to previous value. Is this by design? Of course, if key is changed, check if it's still and ignored field (or becomes one), and if the diffs are still valid, and if sorting needs redo, etc."*
+3. *"2. the middle arrows for sync: when it's for a group, make a small "folder sync" like button, different from the arrows for sync per line."*
+
+### Root Causes & Fixes Learned
+- **Bug: Key Renames in Live Editor Not Recorded (Reverting to Old Key on Blur)**:
+  - *Root Cause*: In `handleLiveEditLine` (`src/App.tsx`), `patchRawTextScalar(targetDoc.rawText, originalKey, ...)` was invoked whenever `originalKey && newValue !== undefined`. `patchRawTextScalar` matched `k === originalKey`, updated only the value, and returned the line with `originalKey` intact. Consequently, `patchedText` retained the old key name and overwrote `targetDoc.data`'s renamed key tree upon blur.
+  - *Fix*:
+    1. Built `patchRawTextKeyRename` in `src/diff/inPlacePatcher.ts` to rename keys in-place across YAML, JSON, TOML key-values, and TOML section headers (`[oldKey]` -> `[newKey]`) while preserving surrounding comments, indentation, and blank lines.
+    2. Updated `handleLiveEditLine` in `src/App.tsx` to detect `isKeyRenamed`, invoke `patchRawTextKeyRename` (or serialize `updatedData`), and update active paths.
+    3. Document updates trigger `computeSemanticDiff`, which dynamically checks `isFieldIgnored(newKey)`:
+       - Renaming a field from `generation` (ignored) to `customGen` (not ignored) turns it into an active diff (`modified`).
+       - Renaming to an ignored field tags it as `ignored_diff`.
+       - Option A key alignment re-evaluates and aligns matching keys or creates clean spacers without shifting the document.
+- **Group "Folder Sync" Gutter Button**:
+  - *Enhancement*: In `src/components/DiffGutter.tsx`, added `isGroup` detection for block headers and object/array rows.
+  - Group rows render a distinct `FolderSync` icon button with cyan/emerald group border styling and clear tooltips (`"Sync entire group Left ▸ Right"` / `"Sync entire group Right ◂ Left"`).
+  - Single-line rows retain standard `ArrowRight` and `ArrowLeft` buttons.
+- **Interactive UI Testing (`playwright-cli`)**:
+  - Performed real browser automation tests against `http://localhost:3000`:
+    1. Verified visual presence of distinct folder sync buttons for `metadata:`, `managedFields:`, `[0]:`, `labels:`, `spec:`, `template:`.
+    2. Tested editing scalar value (`replicas: 3` -> `99`) in the live editor: confirmed live update in inspector and right pane.
+    3. Tested renaming key (`replicas: 99` -> `podReplicas: 99`): verified key was permanently recorded, diff status recomputed, and Option A alignment preserved.
+    4. Tested Undo button: verified reverting `podReplicas: 99` back to `replicas: 99`.
+    5. Tested clicking the `spec:` folder sync button: verified that the entire `spec` group (including `replicas: 99` and child objects) synced across panes.
+  - 22 unit tests passing in `src/diff/diffEngine.test.ts`.
+
 
 
 

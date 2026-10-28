@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Copy,
   ClipboardPaste,
@@ -20,6 +20,14 @@ import {
 } from 'lucide-react';
 import { AlignedDiffRow, DocumentFormat, ParsedDocument } from '../diff/types';
 import { parseEditedLine, parseInlineValue } from '../diff/inPlacePatcher';
+import {
+  calculateWordJump,
+  isShortcutUndo,
+  isShortcutRedo,
+  isShortcutWordJump,
+  isShortcutLineJump,
+  isShortcutFileJump,
+} from '../diff/keyboardShortcuts';
 
 interface DiffPaneProps {
   side: 'left' | 'right';
@@ -42,6 +50,10 @@ interface DiffPaneProps {
     newValue: any,
     shouldPushHistory: boolean
   ) => void;
+  onPushHistory?: (label: string) => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  undoRedoVersion?: number;
   isFocusedPane?: boolean;
   onFocusPane?: () => void;
   onPasteText?: (text: string) => boolean;
@@ -141,6 +153,10 @@ export const DiffPane: React.FC<DiffPaneProps> = ({
   inlineEditMode,
   onInlineEditValue,
   onLiveEditLine,
+  onPushHistory,
+  onUndo,
+  onRedo,
+  undoRedoVersion,
   isFocusedPane = false,
   onFocusPane,
   onPasteText,
@@ -154,6 +170,11 @@ export const DiffPane: React.FC<DiffPaneProps> = ({
   const [editingPath, setEditingPath] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<string>('');
   const [focusedRowState, setFocusedRowState] = useState<FocusedRowEditState | null>(null);
+
+  // When undo/redo occurs, reset any focused row draft so restored doc text immediately reflects in the row
+  useEffect(() => {
+    setFocusedRowState(null);
+  }, [undoRedoVersion]);
 
   const showPasted = pastedFeedback || localPasted;
 
@@ -288,6 +309,26 @@ export const DiffPane: React.FC<DiffPaneProps> = ({
           targetInput.setSelectionRange(clampedCol, clampedCol);
         } catch {
           // Ignore selection range errors on unmounted inputs
+        }
+      });
+    }
+  };
+
+  const moveFocusToFileBoundary = (target: 'top' | 'bottom') => {
+    if (!scrollRef.current) return;
+    const allInputs = Array.from(
+      scrollRef.current.querySelectorAll<HTMLInputElement>('input[data-live-row-input="true"]')
+    );
+    if (allInputs.length === 0) return;
+    const targetInput = target === 'top' ? allInputs[0] : allInputs[allInputs.length - 1];
+    if (targetInput) {
+      targetInput.focus();
+      const col = target === 'top' ? 0 : targetInput.value.length;
+      requestAnimationFrame(() => {
+        try {
+          targetInput.setSelectionRange(col, col);
+        } catch {
+          // Ignore
         }
       });
     }
@@ -714,6 +755,9 @@ export const DiffPane: React.FC<DiffPaneProps> = ({
                       onChange={(e) => {
                         const newText = e.target.value;
                         const shouldPushHistory = !focusedRowState?.hasPushedHistory;
+                        if (shouldPushHistory && onPushHistory) {
+                          onPushHistory(`Edit ${cell.key || cell.path} in ${side} pane`);
+                        }
                         setFocusedRowState({
                           rowKey: stableRowKey,
                           path: cell.path,
@@ -725,7 +769,7 @@ export const DiffPane: React.FC<DiffPaneProps> = ({
                         });
                         if (cell.valueType === 'comment' || cell.path.includes('[#comment_')) {
                           if (onLiveEditLine) {
-                            onLiveEditLine(cell.path, '#comment', '#comment', newText, shouldPushHistory);
+                            onLiveEditLine(cell.path, '#comment', '#comment', newText, false);
                           }
                         } else {
                           const parsed = parseEditedLine(newText, cell.key, cell.isBlockHeader);
@@ -737,7 +781,7 @@ export const DiffPane: React.FC<DiffPaneProps> = ({
                                 cell.key,
                                 cell.key,
                                 parsed.value,
-                                shouldPushHistory
+                                false
                               );
                             } else {
                               onInlineEditValue(cell.path, parsed.value);
@@ -761,7 +805,7 @@ export const DiffPane: React.FC<DiffPaneProps> = ({
                                 '#comment',
                                 '#comment',
                                 focusedRowState.draftText,
-                                !focusedRowState.hasPushedHistory
+                                false
                               );
                             }
                           } else {
@@ -776,7 +820,7 @@ export const DiffPane: React.FC<DiffPaneProps> = ({
                                 focusedRowState.originalKey,
                                 parsed.key,
                                 parsed.isValueComplete ? parsed.value : undefined,
-                                !focusedRowState.hasPushedHistory
+                                false
                               );
                             } else if (!focusedRowState.isBlockHeader && parsed.isValueComplete) {
                               if (onLiveEditLine) {
@@ -785,7 +829,7 @@ export const DiffPane: React.FC<DiffPaneProps> = ({
                                   focusedRowState.originalKey,
                                   focusedRowState.originalKey,
                                   parsed.value,
-                                  !focusedRowState.hasPushedHistory
+                                  false
                                 );
                               } else {
                                 onInlineEditValue(focusedRowState.path, parsed.value);
@@ -829,6 +873,52 @@ export const DiffPane: React.FC<DiffPaneProps> = ({
                         }
                       }}
                       onKeyDown={(e) => {
+                        // Undo shortcut (Windows/Linux Ctrl+Z, macOS ⌘Z)
+                        if (isShortcutUndo(e)) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setFocusedRowState(null);
+                          onUndo?.();
+                          return;
+                        }
+
+                        // Redo shortcut (Windows/Linux Ctrl+Y / Ctrl+Shift+Z, macOS ⇧⌘Z / ⌘Y)
+                        if (isShortcutRedo(e)) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setFocusedRowState(null);
+                          onRedo?.();
+                          return;
+                        }
+
+                        // Word-by-word caret navigation (Ctrl+ArrowLeft/Right on Windows/Linux, ⌥Option+ArrowLeft/Right on macOS)
+                        const wordJump = isShortcutWordJump(e);
+                        if (wordJump.isJump) {
+                          e.preventDefault();
+                          const input = e.currentTarget;
+                          const currentPos = input.selectionStart ?? 0;
+                          const nextPos = calculateWordJump(input.value, currentPos, wordJump.direction);
+                          input.setSelectionRange(nextPos, nextPos);
+                          return;
+                        }
+
+                        // Line start / end jump (macOS ⌘ArrowLeft / ⌘ArrowRight)
+                        const lineJump = isShortcutLineJump(e);
+                        if (lineJump.isJump) {
+                          e.preventDefault();
+                          const nextPos = lineJump.to === 'start' ? 0 : e.currentTarget.value.length;
+                          e.currentTarget.setSelectionRange(nextPos, nextPos);
+                          return;
+                        }
+
+                        // File top / bottom jump (macOS ⌘ArrowUp / ⌘ArrowDown, Windows Ctrl+Home / Ctrl+End)
+                        const fileJump = isShortcutFileJump(e);
+                        if (fileJump.isJump) {
+                          e.preventDefault();
+                          moveFocusToFileBoundary(fileJump.to);
+                          return;
+                        }
+
                         if (e.key === 'Enter') {
                           e.preventDefault();
                           if (cell.valueType === 'comment' || cell.path.includes('[#comment_')) {
@@ -838,7 +928,7 @@ export const DiffPane: React.FC<DiffPaneProps> = ({
                                 '#comment',
                                 '#comment',
                                 activeLineText,
-                                !focusedRowState?.hasPushedHistory
+                                false
                               );
                             }
                             moveFocusToAdjacentRow(e.currentTarget, 1);
@@ -855,7 +945,7 @@ export const DiffPane: React.FC<DiffPaneProps> = ({
                               cell.key,
                               parsed.key,
                               parsed.isValueComplete ? parsed.value : undefined,
-                              !focusedRowState?.hasPushedHistory
+                              false
                             );
                           } else if (!cell.isBlockHeader && parsed.isValueComplete) {
                             if (onLiveEditLine) {
@@ -864,7 +954,7 @@ export const DiffPane: React.FC<DiffPaneProps> = ({
                                 cell.key,
                                 cell.key,
                                 parsed.value,
-                                !focusedRowState?.hasPushedHistory
+                                false
                               );
                             } else {
                               onInlineEditValue(cell.path, parsed.value);
